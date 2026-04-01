@@ -6,14 +6,16 @@ HolsterEverything is a server-side SPT mod that expands what can be equipped in 
 - Built and tested on `SPT 4.0.13`
 - Other versions may work, but are not guaranteed
 
+## Download
+- Direct download (`v1.0.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.0.0/HolsterEverything-v1.0.0.7z)
+
 ## What This Mod Changes
 - Adds template ID `5422acb9af1c889c16000029` to the PMC holster slot filter (`55d729d84bdc2de3098b456b`)
-- Applies the change automatically when the SPT server starts
-- Safe to load multiple times: the whitelist entry is only added once (no duplicate entry is written)
+- Applies the change when the SPT server starts
 
 ## Installation
-1. Download the latest release `.7z` file.
-2. Extract the `.7z` directly into your SPT installation folder.
+1. Download the latest release file from the links above.
+2. Extract the release file directly into your SPT installation folder.
 
 You can also extract first, then drag-and-drop the extracted `SPT` folder into your SPT installation folder.
 
