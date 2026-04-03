@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>HolsterEverything</AssemblyName>
+    <RootNamespace>HolsterEverything</RootNamespace>
+    <Version>1.1.0</Version>
+    <SPTRoot Condition="'$(SPTRoot)' == ''">C:\SPT</SPTRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(SPTRoot)\BepInEx\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(SPTRoot)\BepInEx\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(SPTRoot)\EscapeFromTarkov_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(SPTRoot)\EscapeFromTarkov_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyToSPTPlugins" AfterTargets="Build" Condition="Exists('$(SPTRoot)\BepInEx\core\BepInEx.dll')">
+    <PropertyGroup>
+      <PluginOutputDir>$(SPTRoot)\BepInEx\plugins\HolsterEverything</PluginOutputDir>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(PluginOutputDir)" />
+
+    <Copy
+      SourceFiles="$(TargetDir)$(AssemblyName).dll"
+      DestinationFiles="$(PluginOutputDir)\$(AssemblyName).dll" />
+
+    <Copy
+      SourceFiles="$(TargetDir)$(AssemblyName).pdb"
+      DestinationFiles="$(PluginOutputDir)\$(AssemblyName).pdb"
+      Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+  </Target>
+</Project>
+
