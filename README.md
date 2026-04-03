@@ -2,6 +2,8 @@
 
 HolsterEverything is a server-side SPT mod that lets you control which weapon categories can be equipped in the PMC holster slot.
 
+![F12 menu](./Screenshot.png)
+
 ## Compatibility
 - Built and tested on `SPT 4.0.13`
 - Other versions may work, but are not guaranteed
