@@ -1,32 +1,36 @@
 ﻿# HolsterEverything (SPT 4.0.13)
 
-HolsterEverything is a server-side SPT mod that expands what can be equipped in the PMC holster slot.
+HolsterEverything is a server-side SPT mod that lets you control which weapon categories can be equipped in the PMC holster slot.
 
 ## Compatibility
 - Built and tested on `SPT 4.0.13`
 - Other versions may work, but are not guaranteed
 
 ## Download
-- Direct download (`v1.0.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.0.0/HolsterEverything-v1.0.0.7z)
+- Direct download (`v1.1.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.1.0/HolsterEverything-v1.1.0.7z)
 
 ## What This Mod Changes
-- Adds template ID `5422acb9af1c889c16000029` to the PMC holster slot filter (`55d729d84bdc2de3098b456b`)
-- Applies the change when the SPT server starts
+- Patches PMC holster whitelist on server startup (`slot id: 55d729d84bdc2de3098b456b`)
+- Reads category settings from `config.json`
+- Supports either:
+  - all weapon categories (via base class `5422acb9af1c889c16000029`), or
+  - selected direct weapon child categories (except categories excluded from F12 toggles)
+- Does not remove or alter vanilla whitelist entries
 
 ## Installation
-1. Download the latest release file from the links above.
-2. Extract the release file directly into your SPT installation folder.
-
-You can also extract first, then drag-and-drop the extracted `SPT` folder into your SPT installation folder.
+1. Download the release file
+2. Extract it directly into your SPT installation folder
+3. Start the game and edit `config.json` as needed
+4. Restart server after config changes
 
 ## Verify It Loaded
-Start the SPT server and check for a `HolsterEverything:` log line confirming the patch ran.
+Start the SPT server and check for `HolsterEverything:` log lines.
 
 ## Behavior After Removing The Mod
-- If you uninstall the mod while a non-default weapon is already in your holster, that weapon can remain there in your existing profile.
-- After you unequip that weapon, you will not be able to equip it back into the holster slot without the mod enabled again.
+- If you uninstall the mod while a non-default weapon is already in holster, that weapon can remain there in your existing profile
+- After you unequip that weapon, you cannot equip it back into holster unless the mod is enabled again
 
 ## Uninstall
-Delete the folder:
+Delete:
 
 `SPT/user/mods/HolsterEverything`
