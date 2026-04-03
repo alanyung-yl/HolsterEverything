@@ -10,6 +10,7 @@ HolsterEverything is a server-side SPT mod that lets you control which weapon ca
 
 ## Download
 - Direct download (`v1.1.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.1.0/HolsterEverything-v1.1.0.7z)
+
 [![](https://img.shields.io/github/v/release/alanyung-yl/HolsterEverything?display_name=tag&sort=semver)](https://github.com/alanyung-yl/HolsterEverything/releases/latest)
 [![](https://img.shields.io/github/downloads/alanyung-yl/HolsterEverything/total)](https://github.com/alanyung-yl/HolsterEverything/releases)
 
