@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Configuration;
 
 namespace HolsterEverything.F12Config;
@@ -69,7 +69,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             var enableAllWeapons = _enableAllWeapons?.Value ?? true;
             var json = BuildServerConfigJson(enableAllWeapons, enabledNames);
 
-            var configPath = Path.Combine(Paths.GameRootPath, "user", "mods", "HolsterEverything", "config.json");
+            var configPath = Path.Combine(Paths.GameRootPath, "SPT", "user", "mods", "HolsterEverything", "config.json");
             var directory = Path.GetDirectoryName(configPath);
             if (!string.IsNullOrWhiteSpace(directory))
             {
@@ -117,3 +117,4 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         return $"\"{escaped}\"";
     }
 }
+
