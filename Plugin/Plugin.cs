@@ -12,6 +12,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
     private readonly Dictionary<string, ConfigEntry<bool>> _categoryToggles = new(StringComparer.OrdinalIgnoreCase);
     private ConfigEntry<bool>? _enableAllWeapons;
+    private ConfigEntry<string>? _restartNotice;
 
     // Intentionally excludes Pistol and Revolver from toggles.
     private static readonly string[] WeaponCategoryNames =
@@ -30,6 +31,21 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
     private void Awake()
     {
+        _restartNotice = Config.Bind(
+            "0. Notice",
+            "Restart Required",
+            "Restart server to apply changes",
+            new ConfigDescription(
+                "Informational message only.",
+                null,
+                new ConfigurationManagerAttributes
+                {
+                    ReadOnly = true,
+                    Order = 999
+                }
+            )
+        );
+
         _enableAllWeapons = Config.Bind(
             "General",
             "EnableAllWeapons",
@@ -118,3 +134,8 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     }
 }
 
+public sealed class ConfigurationManagerAttributes
+{
+    public bool? ReadOnly { get; set; }
+    public int? Order { get; set; }
+}
