@@ -9,8 +9,8 @@ namespace HolsterEverything.F12Config;
 public class HolsterEverythingClientPlugin : BaseUnityPlugin
 {
     private const string PluginGuid = "com.alanyung-yl.holstereverything.f12config";
-    private const string PluginName = "HolsterEverything F12 Config Sync";
-    private const string PluginVersion = "1.1.0";
+    private const string PluginName = "HolsterEverything";
+    private const string PluginVersion = "1.2.0";
     private const string HolsterSlotName = "Holster";
 
     private static HolsterEverythingClientPlugin? _instance;
@@ -21,7 +21,6 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     private ConfigEntry<bool>? _enableHolsterSizeLimit;
     private ConfigEntry<int>? _maxHolsterWidth;
     private ConfigEntry<int>? _maxHolsterHeight;
-    private ConfigEntry<bool>? _ignoreFoldState;
 
     // Intentionally excludes Pistol and Revolver from toggles.
     private static readonly string[] WeaponCategoryNames =
@@ -65,7 +64,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
         _enableAllWeapons.SettingChanged += (_, _) => SaveServerConfig();
 
-        var sizeSection = "Holster Size (Client-side, applies immediately)";
+        var sizeSection = "Holster Size (Apply immediately)";
 
         _enableHolsterSizeLimit = Config.Bind(
             sizeSection,
@@ -77,7 +76,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         _maxHolsterWidth = Config.Bind(
             sizeSection,
             "MaxHolsterWidth",
-            3,
+            4,
             new ConfigDescription(
                 "Maximum holster weapon width when the client-side size restriction is enabled.",
                 new AcceptableValueRange<int>(1, 10)
@@ -94,16 +93,9 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             )
         );
 
-        _ignoreFoldState = Config.Bind(
-            sizeSection,
-            "IgnoreFoldState",
-            true,
-            "When true, folded weapons are checked using their unfolded-equivalent width."
-        );
-
         SaveServerConfig();
         _harmony.PatchAll(typeof(HolsterEverythingClientPlugin).Assembly);
-        Logger.LogInfo("HolsterEverything F12 config sync initialized. Restart SPT server after category changes. Holster size settings are client-side.");
+        Logger.LogInfo("HolsterEverything BepInEx F12 Configuration Manager sync initialized. Restart SPT server after category changes. Holster size settings apply immediately.");
     }
 
     private void OnDestroy()
@@ -193,7 +185,8 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
     internal static bool ShouldIgnoreFoldState()
     {
-        return _instance?._ignoreFoldState?.Value ?? true;
+        // Temporarily fixed to the current default until fold-state behavior is revisited.
+        return false;
     }
 
     internal static void LogPatchIssue(string message)
