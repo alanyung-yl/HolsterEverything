@@ -14,9 +14,6 @@ HolsterEverything is an SPT mod that lets you control which weapon categories ca
 [![](https://img.shields.io/github/v/release/alanyung-yl/HolsterEverything?display_name=tag&sort=semver)](https://github.com/alanyung-yl/HolsterEverything/releases/latest)
 [![](https://img.shields.io/github/downloads/alanyung-yl/HolsterEverything/total)](https://github.com/alanyung-yl/HolsterEverything/releases)
 
-[![](https://img.shields.io/github/v/release/alanyung-yl/HolsterEverything?display_name=tag&sort=semver)](https://github.com/alanyung-yl/HolsterEverything/releases/latest)
-[![](https://img.shields.io/github/downloads/alanyung-yl/HolsterEverything/total)](https://github.com/alanyung-yl/HolsterEverything/releases)
-
 ## What This Mod Changes
 - Patches PMC holster whitelist on server startup (`slot id: 55d729d84bdc2de3098b456b`)
 - Reads category settings from `config.json`
@@ -45,3 +42,4 @@ Start the SPT server and check for `HolsterEverything:` log lines.
 Delete:
 
 `SPT/user/mods/HolsterEverything`
+`BepInEx/plugins/HolsterEverything`
