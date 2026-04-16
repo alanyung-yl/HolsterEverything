@@ -1,6 +1,6 @@
 ﻿# HolsterEverything (SPT 4.0.13)
 
-HolsterEverything is an SPT mod that lets you control which weapon categories can be equipped in the PMC holster slot, with an optional client-side holster weapon size limit.
+HolsterEverything is an SPT mod that lets you control which weapon categories can be equipped in the PMC holster slot, with client-side holster size and holster handling restrictions.
 
 ![F12 menu](./Screenshot.png)
 
@@ -9,21 +9,30 @@ HolsterEverything is an SPT mod that lets you control which weapon categories ca
 - Other versions may work, but are not guaranteed
 
 ## Download
-- Direct download (`v1.2.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.2.0/HolsterEverything-v1.2.0.7z)
+- Direct download (`v1.3.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.3.0/HolsterEverything-v1.3.0.7z)
 
 [![](https://img.shields.io/github/v/release/alanyung-yl/HolsterEverything?display_name=tag&sort=semver)](https://github.com/alanyung-yl/HolsterEverything/releases/latest)
 [![](https://img.shields.io/github/downloads/alanyung-yl/HolsterEverything/total)](https://github.com/alanyung-yl/HolsterEverything/releases)
 
-## What This Mod Changes
-- Patches PMC holster whitelist on server startup (`slot id: 55d729d84bdc2de3098b456b`)
-- Reads category settings from `config.json`
+### Features
+- Lets you choose which weapon categories can be equipped in the holster slot
+- Saves your selected weapon category settings for the mod
 - Optionally blocks oversized holster weapons
-- Supports either:
-  - all weapon categories (via base class `5422acb9af1c889c16000029`), or
-  - selected direct weapon child categories (except categories excluded from F12 toggles)
-- Does not remove or alter vanilla whitelist entries
-- Category settings are restart-to-apply
-- Holster size settings are adjusted in BepInEx F12 Configuration Manager and apply immediately
+- Optionally treat folded weapons as unfolded for the holster size check
+- Optionally keep the size limit off for vanilla holster weapons
+- Optionally apply handling penalty to weapon in hand
+- Optionally keep the handling penalty off for vanilla holster weapons
+- Optionally let non-foldable holstered weapons trigger the handling penalty
+
+### Behavior
+- Supports either all weapon categories or only selected weapon categories
+- Does not remove or alter vanilla holster whitelist entries
+- Weapon category settings require restarting the server
+- Holster size and holster handling settings apply immediately
+- `Limit Additional Weapons Only` defaults to `true` for both size and handling
+- `Use Unfolded Size` checks folded weapons against their unfolded size before allowing a holster drop
+- `Enable Handling Penalty` applies an ergonomics penalty to the weapon in hand
+- Vanilla holster weapons only trigger the handling penalty when they have an installed stock attachment
 
 ## Installation
 1. Download the release file
@@ -34,12 +43,10 @@ HolsterEverything is an SPT mod that lets you control which weapon categories ca
 ## Verify It Loaded
 Start the SPT server and check for `HolsterEverything:` log lines.
 
-## Behavior After Removing The Mod
-- If you uninstall the mod while a non-default weapon is already in holster, that weapon can remain there in your existing profile
-- After you unequip that weapon, you cannot equip it back into holster unless the mod is enabled again
-
 ## Uninstall
 Delete:
 
-`SPT/user/mods/HolsterEverything`
-`BepInEx/plugins/HolsterEverything`
+- `SPT/user/mods/HolsterEverything`
+- `BepInEx/plugins/HolsterEverything`
+- If you uninstall the mod while a non-default weapon is already in holster, that weapon can remain there in your existing profile
+- After you unequip that weapon, you cannot equip it back into holster unless the mod is enabled again

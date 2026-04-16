@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text.Json;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
@@ -15,13 +15,13 @@ public record ModMetadata : AbstractModMetadata
     public override string Name { get; init; } = "HolsterEverything";
     public override string Author { get; init; } = "alanyung-yl";
     public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.2.0");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.3.0");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
     public override List<string>? Incompatibilities { get; init; }
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
     public override string? Url { get; init; }
     public override bool? IsBundleMod { get; init; }
-    public override string License { get; init; } = "MIT";
+    public override string License { get; init; } = "GNU GPLv3";
 }
 
 public class HolsterEverythingConfig
@@ -298,3 +298,4 @@ public class HolsterEverythingPatch(ISptLogger<HolsterEverythingPatch> logger, D
         return Path.Combine(modDirectory, "config.json");
     }
 }
+
