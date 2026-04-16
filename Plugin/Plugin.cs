@@ -1,6 +1,7 @@
 using BepInEx;
 using BepInEx.Configuration;
 using HarmonyLib;
+using System.Linq.Expressions;
 using System.Reflection;
 
 namespace HolsterEverything.F12Config;
@@ -19,6 +20,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     private readonly Dictionary<string, ConfigEntry<bool>> _categoryToggles = new(StringComparer.OrdinalIgnoreCase);
     private ConfigEntry<bool>? _enableAllWeapons;
     private ConfigEntry<bool>? _enableHolsterSizeLimit;
+    private ConfigEntry<bool>? _ignoreFoldState;
     private ConfigEntry<int>? _maxHolsterWidth;
     private ConfigEntry<int>? _maxHolsterHeight;
 
@@ -71,6 +73,13 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             "EnableHolsterSizeLimit",
             false,
             "When true, oversized weapons are rejected before they can be dropped into the holster slot."
+        );
+
+        _ignoreFoldState = Config.Bind(
+            sizeSection,
+            "IgnoreFoldState",
+            false,
+            "When true, folded weapons are checked against their unfolded size before they can be dropped into the holster slot."
         );
 
         _maxHolsterWidth = Config.Bind(
@@ -185,8 +194,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
     internal static bool ShouldIgnoreFoldState()
     {
-        // Temporarily fixed to the current default until fold-state behavior is revisited.
-        return false;
+        return _instance?._ignoreFoldState?.Value ?? false;
     }
 
     internal static void LogPatchIssue(string message)
@@ -197,42 +205,126 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     [HarmonyPatch]
     private static class HolsterSlotSizeClientPatch
     {
+        private delegate object? ObjectGetter(object instance);
+        private delegate string? StringGetter(object instance);
+        private delegate int IntGetter(object instance);
+        private delegate bool BoolGetter(object instance);
+        private delegate object? ObjectMethodCaller(object instance);
+        private delegate object? ObjectMethodWithBoolCaller(object instance, object arg0, object arg1, bool arg2);
+
+        private static readonly Type? SlotViewType = AccessTools.TypeByName("EFT.UI.DragAndDrop.SlotView");
+        private static readonly Type? ItemContextType = AccessTools.TypeByName("ItemContextClass");
+        private static readonly Type? ItemContextAbstractType = AccessTools.TypeByName("ItemContextAbstractClass");
+        private static readonly Type? OperationType = AccessTools.TypeByName("GStruct153");
+        private static readonly Type? SlotType = AccessTools.TypeByName("EFT.InventoryLogic.Slot");
+        private static readonly Type? WeaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
+        private static readonly Type? InventoryEquipmentType = AccessTools.TypeByName("EFT.InventoryLogic.InventoryEquipment");
+
+        private static readonly MethodBase? CanAcceptMethod = ResolveCanAcceptMethod();
+
+        private static readonly ObjectGetter? SlotGetter = CreateGetter<ObjectGetter>(FindProperty(SlotViewType, "Slot"));
+        private static readonly ObjectGetter? SlotFieldGetter = CreateGetter<ObjectGetter>(FindField(SlotViewType, "slot_0"));
+        private static readonly StringGetter? SlotIdGetter = CreateGetter<StringGetter>(FindProperty(SlotType, "ID"));
+        private static readonly StringGetter? SlotNameGetter = CreateGetter<StringGetter>(FindProperty(SlotType, "Name"));
+        private static readonly ObjectGetter? SlotParentItemGetter = CreateGetter<ObjectGetter>(FindProperty(SlotType, "ParentItem"));
+        private static readonly ObjectGetter? DraggedItemGetter = CreateGetter<ObjectGetter>(FindField(ItemContextType, "Item"));
+        private static readonly ObjectGetter? FallbackDraggedItemGetter = CreateGetter<ObjectGetter>(FindField(ItemContextAbstractType, "Item"));
+
+        private static readonly MethodInfo? CalculateCellSizeMethod = FindMethod(WeaponType, "CalculateCellSize");
+        private static readonly ObjectMethodCaller? CalculateCellSizeCaller = CreateMethodCaller(CalculateCellSizeMethod);
+        private static readonly MemberInfo? CellSizeXMember = FindFieldOrProperty(CalculateCellSizeMethod?.ReturnType, "X");
+        private static readonly MemberInfo? CellSizeYMember = FindFieldOrProperty(CalculateCellSizeMethod?.ReturnType, "Y");
+        private static readonly IntGetter? CellSizeXGetter = CreateGetter<IntGetter>(CellSizeXMember);
+        private static readonly IntGetter? CellSizeYGetter = CreateGetter<IntGetter>(CellSizeYMember);
+
+        private static readonly BoolGetter? WeaponFoldedGetter = CreateGetter<BoolGetter>(FindProperty(WeaponType, "Folded"));
+        private static readonly MemberInfo? CurrentAddressMember = FindFieldOrProperty(WeaponType, "CurrentAddress");
+        private static readonly ObjectGetter? WeaponCurrentAddressGetter = CreateGetter<ObjectGetter>(CurrentAddressMember);
+        private static readonly MethodInfo? GetFoldableMethod = FindMethod(WeaponType, "GetFoldable");
+        private static readonly ObjectMethodCaller? GetFoldableCaller = CreateMethodCaller(GetFoldableMethod);
+        private static readonly MethodInfo? GetSizeAfterFoldingMethod = ResolveGetSizeAfterFoldingMethod();
+        private static readonly ObjectMethodWithBoolCaller? GetSizeAfterFoldingCaller = CreateMethodWithBoolCaller(GetSizeAfterFoldingMethod);
+
+        private static readonly bool CanValidateHolsterSize =
+            WeaponType is not null
+            && InventoryEquipmentType is not null
+            && (SlotGetter is not null || SlotFieldGetter is not null)
+            && SlotIdGetter is not null
+            && SlotNameGetter is not null
+            && SlotParentItemGetter is not null
+            && (DraggedItemGetter is not null || FallbackDraggedItemGetter is not null)
+            && CalculateCellSizeCaller is not null
+            && CellSizeXGetter is not null
+            && CellSizeYGetter is not null;
+
+        private static readonly bool CanResolveUnfoldedSize =
+            WeaponFoldedGetter is not null
+            && WeaponCurrentAddressGetter is not null
+            && GetFoldableCaller is not null
+            && GetSizeAfterFoldingCaller is not null
+            && CellSizeXGetter is not null
+            && CellSizeYGetter is not null;
+
         private static MethodBase? TargetMethod()
         {
-            var slotViewType = AccessTools.TypeByName("EFT.UI.DragAndDrop.SlotView");
-            var itemContextType = AccessTools.TypeByName("ItemContextClass");
-            var itemContextAbstractType = AccessTools.TypeByName("ItemContextAbstractClass");
-            var operationType = AccessTools.TypeByName("GStruct153");
-
-            if (slotViewType is null || itemContextType is null || itemContextAbstractType is null || operationType is null)
+            if (CanAcceptMethod is null)
             {
                 LogPatchIssue("HolsterEverything client patch could not resolve SlotView.CanAccept types. Drag-drop size validation is disabled.");
                 return null;
             }
 
-            return AccessTools.Method(slotViewType, "CanAccept", [itemContextType, itemContextAbstractType, operationType.MakeByRefType()]);
+            if (!CanValidateHolsterSize)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve required drag-drop members. Holster size validation is disabled.");
+            }
+
+            return CanAcceptMethod;
         }
 
         private static bool Prefix(object __instance, ref bool __result, object[] __args)
         {
-            if (!IsHolsterSizeLimitEnabled())
+            if (!IsHolsterSizeLimitEnabled() || !CanValidateHolsterSize)
             {
                 return true;
             }
 
-            if (!IsHolsterSlot(__instance))
+            var slot = GetSlot(__instance);
+            if (slot is null || !IsHolsterSlot(slot))
             {
                 return true;
             }
 
             var draggedItem = GetDraggedItem(__args);
-            if (draggedItem is null || !IsWeapon(draggedItem))
+            if (draggedItem is null || WeaponType?.IsInstanceOfType(draggedItem) != true)
             {
                 return true;
             }
 
-            var (width, height) = GetHolsterSize(draggedItem);
-            if (width <= GetMaxHolsterWidth() && height <= GetMaxHolsterHeight())
+            var maxWidth = GetMaxHolsterWidth();
+            var maxHeight = GetMaxHolsterHeight();
+
+            if (!TryGetCurrentSize(draggedItem, out var width, out var height))
+            {
+                return true;
+            }
+
+            if (width > maxWidth || height > maxHeight)
+            {
+                __result = false;
+                return false;
+            }
+
+            if (!ShouldIgnoreFoldState() || WeaponFoldedGetter?.Invoke(draggedItem) != true)
+            {
+                return true;
+            }
+
+            if (!TryGetUnfoldedSize(draggedItem, out width, out height))
+            {
+                return true;
+            }
+
+            if (width <= maxWidth && height <= maxHeight)
             {
                 return true;
             }
@@ -241,25 +333,54 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             return false;
         }
 
-        private static bool IsHolsterSlot(object slotView)
+        private static MethodBase? ResolveCanAcceptMethod()
         {
-            var slot = GetMemberValue(slotView, "Slot") ?? GetMemberValue(slotView, "slot_0");
-            var slotId = GetStringMemberValue(slot, "ID");
-            var slotName = GetStringMemberValue(slot, "Name");
-            var parentItem = GetMemberValue(slot, "ParentItem");
-            var parentTypeName = parentItem?.GetType().FullName;
-            var slotMatches = string.Equals(slotId, HolsterSlotName, StringComparison.OrdinalIgnoreCase)
-                || (string.IsNullOrWhiteSpace(slotId) && string.Equals(slotName, HolsterSlotName, StringComparison.OrdinalIgnoreCase));
+            if (SlotViewType is null || ItemContextType is null || ItemContextAbstractType is null || OperationType is null)
+            {
+                return null;
+            }
 
-            return slotMatches
-                && string.Equals(parentTypeName, "EFT.InventoryLogic.InventoryEquipment", StringComparison.Ordinal);
+            return AccessTools.Method(SlotViewType, "CanAccept", [ItemContextType, ItemContextAbstractType, OperationType.MakeByRefType()]);
+        }
+
+        private static MethodInfo? ResolveGetSizeAfterFoldingMethod()
+        {
+            var currentAddressType = GetMemberType(CurrentAddressMember);
+            var foldableType = GetFoldableMethod?.ReturnType;
+
+            if (WeaponType is null || currentAddressType is null || foldableType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(WeaponType, "GetSizeAfterFolding", [currentAddressType, foldableType, typeof(bool)]);
+        }
+
+        private static object? GetSlot(object slotView)
+        {
+            return SlotGetter?.Invoke(slotView) ?? SlotFieldGetter?.Invoke(slotView);
+        }
+
+        private static bool IsHolsterSlot(object slot)
+        {
+            var slotId = SlotIdGetter?.Invoke(slot);
+            var slotMatches = string.Equals(slotId, HolsterSlotName, StringComparison.OrdinalIgnoreCase)
+                || (string.IsNullOrWhiteSpace(slotId) && string.Equals(SlotNameGetter?.Invoke(slot), HolsterSlotName, StringComparison.OrdinalIgnoreCase));
+
+            if (!slotMatches)
+            {
+                return false;
+            }
+
+            var parentItem = SlotParentItemGetter?.Invoke(slot);
+            return parentItem is not null && InventoryEquipmentType?.IsInstanceOfType(parentItem) == true;
         }
 
         private static object? GetDraggedItem(object[] args)
         {
             if (args.Length >= 1 && args[0] is not null)
             {
-                var draggedItem = GetMemberValue(args[0], "Item");
+                var draggedItem = DraggedItemGetter?.Invoke(args[0]);
                 if (draggedItem is not null)
                 {
                     return draggedItem;
@@ -268,82 +389,182 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
             if (args.Length >= 2 && args[1] is not null)
             {
-                return GetMemberValue(args[1], "Item");
+                return FallbackDraggedItemGetter?.Invoke(args[1]);
             }
 
             return null;
         }
 
-        private static bool IsWeapon(object item)
+        private static bool TryGetCurrentSize(object weapon, out int width, out int height)
         {
-            var weaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
-            return weaponType?.IsInstanceOfType(item) == true;
-        }
+            width = 0;
+            height = 0;
 
-        private static (int Width, int Height) GetHolsterSize(object item)
-        {
-            var cellSize = AccessTools.Method(item.GetType(), "CalculateCellSize")?.Invoke(item, null);
-            var width = GetIntMemberValue(cellSize, "X");
-            var height = GetIntMemberValue(cellSize, "Y");
-
-            if (ShouldIgnoreFoldState() && IsFolded(item))
+            if (CalculateCellSizeCaller is null)
             {
-                width += Math.Max(0, GetFoldedWidthReduction(item));
+                return false;
             }
 
-            return (width, height);
+            try
+            {
+                return TryReadCellSize(CalculateCellSizeCaller(weapon), out width, out height);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        private static bool IsFolded(object item)
+        private static bool TryGetUnfoldedSize(object weapon, out int width, out int height)
         {
-            return GetBoolMemberValue(item, "Folded");
+            width = 0;
+            height = 0;
+
+            if (!CanResolveUnfoldedSize)
+            {
+                return false;
+            }
+
+            try
+            {
+                var currentAddress = WeaponCurrentAddressGetter?.Invoke(weapon);
+                var foldable = GetFoldableCaller?.Invoke(weapon);
+                if (currentAddress is null || foldable is null)
+                {
+                    return false;
+                }
+
+                var cellSize = GetSizeAfterFoldingCaller?.Invoke(weapon, currentAddress, foldable, false);
+                return TryReadCellSize(cellSize, out width, out height);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        private static int GetFoldedWidthReduction(object item)
+        private static bool TryReadCellSize(object? cellSize, out int width, out int height)
         {
-            var foldable = AccessTools.Method(item.GetType(), "GetFoldable")?.Invoke(item, null) ?? GetMemberValue(item, "Foldable");
-            return Math.Max(0, GetIntMemberValue(foldable, "SizeReduceRight"));
+            width = 0;
+            height = 0;
+
+            if (cellSize is null || CellSizeXGetter is null || CellSizeYGetter is null)
+            {
+                return false;
+            }
+
+            width = CellSizeXGetter(cellSize);
+            height = CellSizeYGetter(cellSize);
+            return true;
         }
 
-        private static object? GetMemberValue(object? instance, string memberName)
+        private static Type? GetMemberType(MemberInfo? member)
         {
-            if (instance is null)
+            return member switch
+            {
+                PropertyInfo property => property.PropertyType,
+                FieldInfo field => field.FieldType,
+                _ => null,
+            };
+        }
+
+        private static PropertyInfo? FindProperty(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Property(type, name);
+        }
+
+        private static FieldInfo? FindField(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Field(type, name);
+        }
+
+        private static MethodInfo? FindMethod(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Method(type, name);
+        }
+
+        private static MemberInfo? FindFieldOrProperty(Type? type, string name)
+        {
+            return (MemberInfo?)FindField(type, name) ?? FindProperty(type, name);
+        }
+
+        private static TDelegate? CreateGetter<TDelegate>(MemberInfo? member) where TDelegate : Delegate
+        {
+            if (member is null)
             {
                 return null;
             }
 
-            var instanceType = instance.GetType();
-            var property = AccessTools.Property(instanceType, memberName);
-            if (property is not null)
+            var invokeMethod = typeof(TDelegate).GetMethod("Invoke");
+            if (invokeMethod is null)
             {
-                return property.GetValue(instance);
+                return null;
             }
 
-            var field = AccessTools.Field(instanceType, memberName);
-            return field?.GetValue(instance);
-        }
-
-        private static int GetIntMemberValue(object? instance, string memberName)
-        {
-            return GetMemberValue(instance, memberName) switch
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            Expression memberAccess = member switch
             {
-                int value => value,
-                _ => 0,
+                PropertyInfo property => Expression.Property(Expression.Convert(instanceParameter, property.DeclaringType!), property),
+                FieldInfo field => Expression.Field(Expression.Convert(instanceParameter, field.DeclaringType!), field),
+                _ => throw new NotSupportedException($"Unsupported member type: {member.MemberType}"),
             };
-        }
 
-        private static string? GetStringMemberValue(object? instance, string memberName)
-        {
-            return GetMemberValue(instance, memberName) as string;
-        }
-
-        private static bool GetBoolMemberValue(object? instance, string memberName)
-        {
-            return GetMemberValue(instance, memberName) switch
+            if (memberAccess.Type != invokeMethod.ReturnType)
             {
-                bool value => value,
-                _ => false,
-            };
+                memberAccess = Expression.Convert(memberAccess, invokeMethod.ReturnType);
+            }
+
+            return Expression.Lambda<TDelegate>(memberAccess, instanceParameter).Compile();
+        }
+
+        private static ObjectMethodCaller? CreateMethodCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var call = Expression.Call(Expression.Convert(instanceParameter, method.DeclaringType!), method);
+            Expression body = call.Type == typeof(void)
+                ? Expression.Block(call, Expression.Constant(null, typeof(object)))
+                : Expression.Convert(call, typeof(object));
+            return Expression.Lambda<ObjectMethodCaller>(body, instanceParameter).Compile();
+        }
+
+        private static ObjectMethodWithBoolCaller? CreateMethodWithBoolCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 3)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var arg0Parameter = Expression.Parameter(typeof(object), "arg0");
+            var arg1Parameter = Expression.Parameter(typeof(object), "arg1");
+            var arg2Parameter = Expression.Parameter(typeof(bool), "arg2");
+
+            var call = Expression.Call(
+                Expression.Convert(instanceParameter, method.DeclaringType!),
+                method,
+                Expression.Convert(arg0Parameter, parameters[0].ParameterType),
+                Expression.Convert(arg1Parameter, parameters[1].ParameterType),
+                Expression.Convert(arg2Parameter, parameters[2].ParameterType)
+            );
+
+            return Expression.Lambda<ObjectMethodWithBoolCaller>(
+                Expression.Convert(call, typeof(object)),
+                instanceParameter,
+                arg0Parameter,
+                arg1Parameter,
+                arg2Parameter
+            ).Compile();
         }
     }
 }
