@@ -11,10 +11,12 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 {
     private const string PluginGuid = "com.alanyung-yl.holstereverything.f12config";
     private const string PluginName = "HolsterEverything";
-    private const string PluginVersion = "1.2.0";
+    private const string PluginVersion = "1.3.0";
     private const string HolsterSlotName = "Holster";
     private const string PistolCategoryId = "5447b5cf4bdc2d65278b4567";
     private const string RevolverCategoryId = "617f1ef5e8b54b0998387733";
+    private const string StockCategoryId = "55818a594bdc2db9688b456a";
+    private const string SignalPistolTemplateId = "620109578d82e67e7911abf2";
 
     private static HolsterEverythingClientPlugin? _instance;
     private Harmony? _harmony;
@@ -26,6 +28,10 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     private ConfigEntry<bool>? _ignoreFoldState;
     private ConfigEntry<int>? _maxHolsterWidth;
     private ConfigEntry<int>? _maxHolsterHeight;
+    private ConfigEntry<bool>? _enableHandlingPenalty;
+    private ConfigEntry<bool>? _onlyLimitAdditionalWeaponsForHandling;
+    private ConfigEntry<int>? _handlingErgoPenalty;
+    private ConfigEntry<bool>? _includeNonFoldableWeaponsForHandling;
 
     // Intentionally excludes Pistol and Revolver from toggles.
     private static readonly string[] WeaponCategoryNames =
@@ -82,8 +88,8 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         _onlyLimitNonVanillaWeapons = Config.Bind(
             sizeSection,
             "Limit Additional Weapons Only",
-            false,
-            "When true, the size limit does not apply to vanilla pistols and revolvers."
+            true,
+            "When true, the size limit does not apply to vanilla holster weapons."
         );
 
         _ignoreFoldState = Config.Bind(
@@ -113,9 +119,42 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             )
         );
 
+        var handlingSection = "Holster Handling (Apply Immediately)";
+
+        _enableHandlingPenalty = Config.Bind(
+            handlingSection,
+            "Enable Handling Penalty",
+            false,
+            "When true, an eligible holstered weapon reduces the ergonomics of the firearm currently in hands."
+        );
+
+        _onlyLimitAdditionalWeaponsForHandling = Config.Bind(
+            handlingSection,
+            "Limit Additional Weapons Only",
+            true,
+            "When true, the handling penalty only applies to additional holster weapon categories."
+        );
+
+        _handlingErgoPenalty = Config.Bind(
+            handlingSection,
+            "Handling Ergo Penalty",
+            10,
+            new ConfigDescription(
+                "Ergonomics penalty applied while an eligible holstered weapon would interfere with handling.",
+                new AcceptableValueRange<int>(1, 90)
+            )
+        );
+
+        _includeNonFoldableWeaponsForHandling = Config.Bind(
+            handlingSection,
+            "Include Non-Foldable Weapons",
+            false,
+            "When true, non-foldable holstered weapons can also trigger the handling penalty."
+        );
+
         SaveServerConfig();
         _harmony.PatchAll(typeof(HolsterEverythingClientPlugin).Assembly);
-        Logger.LogInfo("HolsterEverything BepInEx F12 Configuration Manager sync initialized. Restart SPT server after General or Weapon Categories changes. Holster Size settings apply immediately.");
+        Logger.LogInfo("HolsterEverything BepInEx F12 Configuration Manager sync initialized. Restart SPT server after General or Weapon Categories changes. Holster Size and Holster Handling settings apply immediately.");
     }
 
     private void OnDestroy()
@@ -229,6 +268,26 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     internal static bool ShouldOnlyLimitNonVanillaWeapons()
     {
         return _instance?._onlyLimitNonVanillaWeapons?.Value ?? false;
+    }
+
+    internal static bool IsHandlingPenaltyEnabled()
+    {
+        return _instance?._enableHandlingPenalty?.Value ?? false;
+    }
+
+    internal static bool ShouldOnlyLimitAdditionalWeaponsForHandling()
+    {
+        return _instance?._onlyLimitAdditionalWeaponsForHandling?.Value ?? false;
+    }
+
+    internal static int GetHandlingErgoPenalty()
+    {
+        return Math.Max(1, _instance?._handlingErgoPenalty?.Value ?? 10);
+    }
+
+    internal static bool ShouldIncludeNonFoldableWeaponsForHandling()
+    {
+        return _instance?._includeNonFoldableWeaponsForHandling?.Value ?? false;
     }
 
     internal static void LogPatchIssue(string message)
@@ -345,7 +404,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                 return true;
             }
 
-            if (ShouldOnlyLimitNonVanillaWeapons() && IsVanillaHolsterWeaponCategory(draggedItem))
+            if (ShouldOnlyLimitNonVanillaWeapons() && IsVanillaHolsterWeapon(draggedItem))
             {
                 return true;
             }
@@ -445,7 +504,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             return null;
         }
 
-        private static bool IsVanillaHolsterWeaponCategory(object weapon)
+        private static bool IsVanillaHolsterWeapon(object weapon)
         {
             if (!CanClassifyVanillaHolsterWeapon)
             {
@@ -456,6 +515,12 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             if (template is null)
             {
                 return false;
+            }
+
+            var templateId = ItemTemplateStringIdGetter?.Invoke(template);
+            if (string.Equals(templateId, SignalPistolTemplateId, StringComparison.Ordinal))
+            {
+                return true;
             }
 
             var parentTemplate = ItemTemplateParentGetter?.Invoke(template);
@@ -635,6 +700,486 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                 arg1Parameter,
                 arg2Parameter
             ).Compile();
+        }
+    }
+
+    [HarmonyPatch]
+    private static class HolsterHandlingPenaltyClientPatch
+    {
+        private delegate object? ObjectGetter(object instance);
+        private delegate string? StringGetter(object instance);
+        private delegate bool BoolGetter(object instance);
+        private delegate object? ObjectMethodCaller(object instance);
+        private delegate object? ObjectMethodWithObjectCaller(object instance, object arg0);
+
+        private static readonly Type? PlayerType = AccessTools.TypeByName("EFT.Player");
+        private static readonly Type? FirearmControllerType = ResolveFirearmControllerType();
+        private static readonly Type? WeaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
+        private static readonly Type? ItemType = AccessTools.TypeByName("EFT.InventoryLogic.Item");
+        private static readonly Type? InventoryEquipmentType = AccessTools.TypeByName("EFT.InventoryLogic.InventoryEquipment");
+        private static readonly Type? EquipmentSlotType = AccessTools.TypeByName("EFT.InventoryLogic.EquipmentSlot");
+        private static readonly Type? SlotType = AccessTools.TypeByName("EFT.InventoryLogic.Slot");
+
+        private static readonly MethodBase? TotalErgonomicsGetter = FindProperty(FirearmControllerType, "TotalErgonomics")?.GetMethod;
+
+        private static readonly ObjectGetter? FirearmControllerPlayerGetter = CreateGetter<ObjectGetter>(FindField(FirearmControllerType, "_player"));
+        private static readonly ObjectGetter? FirearmControllerWeaponGetter = CreateGetter<ObjectGetter>(FindProperty(FirearmControllerType, "Weapon"));
+        private static readonly BoolGetter? PlayerIsYourPlayerGetter = CreateGetter<BoolGetter>(FindProperty(PlayerType, "IsYourPlayer"));
+        private static readonly ObjectGetter? PlayerEquipmentGetter = CreateGetter<ObjectGetter>(FindProperty(PlayerType, "Equipment"));
+        private static readonly MethodInfo? GetEquipmentSlotMethod = ResolveGetEquipmentSlotMethod();
+        private static readonly ObjectMethodWithObjectCaller? GetEquipmentSlotCaller = CreateMethodWithObjectCaller(GetEquipmentSlotMethod);
+        private static readonly object? HolsterEquipmentSlotValue = ResolveHolsterEquipmentSlotValue();
+        private static readonly ObjectGetter? SlotContainedItemGetter = CreateGetter<ObjectGetter>(FindProperty(SlotType, "ContainedItem"));
+        private static readonly StringGetter? ItemIdGetter = CreateGetter<StringGetter>(FindProperty(ItemType, "Id"));
+        private static readonly MemberInfo? ItemTemplateMember = FindProperty(ItemType, "Template");
+        private static readonly ObjectGetter? ItemTemplateGetter = CreateGetter<ObjectGetter>(ItemTemplateMember);
+        private static readonly Type? ItemTemplateType = GetMemberType(ItemTemplateMember);
+        private static readonly ObjectGetter? ItemTemplateParentGetter = CreateGetter<ObjectGetter>(FindProperty(ItemTemplateType, "Parent"));
+        private static readonly StringGetter? ItemTemplateStringIdGetter = CreateGetter<StringGetter>(FindProperty(ItemTemplateType, "StringId"));
+        private static readonly MethodInfo? GetAllItemsMethod = FindMethod(ItemType, "GetAllItems");
+        private static readonly ObjectMethodCaller? GetAllItemsCaller = CreateMethodCaller(GetAllItemsMethod);
+        private static readonly MethodInfo? GetFoldableMethod = FindMethod(WeaponType, "GetFoldable");
+        private static readonly ObjectMethodCaller? GetFoldableCaller = CreateMethodCaller(GetFoldableMethod);
+        private static readonly BoolGetter? WeaponFoldedGetter = CreateGetter<BoolGetter>(FindProperty(WeaponType, "Folded"));
+
+        private static readonly bool CanApplyHandlingPenalty =
+            FirearmControllerPlayerGetter is not null
+            && FirearmControllerWeaponGetter is not null
+            && PlayerIsYourPlayerGetter is not null
+            && PlayerEquipmentGetter is not null
+            && GetEquipmentSlotCaller is not null
+            && HolsterEquipmentSlotValue is not null
+            && SlotContainedItemGetter is not null
+            && ItemIdGetter is not null
+            && ItemTemplateGetter is not null
+            && ItemTemplateParentGetter is not null
+            && ItemTemplateStringIdGetter is not null
+            && GetFoldableCaller is not null
+            && WeaponFoldedGetter is not null
+            && WeaponType is not null;
+
+        private static readonly bool CanInspectWeaponAttachments =
+            GetAllItemsCaller is not null
+            && ItemIdGetter is not null
+            && ItemTemplateGetter is not null
+            && ItemTemplateParentGetter is not null
+            && ItemTemplateStringIdGetter is not null;
+
+        private static MethodBase? TargetMethod()
+        {
+            if (TotalErgonomicsGetter is null)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve FirearmController.TotalErgonomics. Handling penalty is disabled.");
+                return null;
+            }
+
+            if (!CanApplyHandlingPenalty)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve required handling penalty members. Handling penalty is disabled.");
+            }
+
+            return TotalErgonomicsGetter;
+        }
+
+        private static void Postfix(object __instance, ref float __result)
+        {
+            if (__result <= 0f || !IsHandlingPenaltyEnabled() || !CanApplyHandlingPenalty)
+            {
+                return;
+            }
+
+            var player = FirearmControllerPlayerGetter?.Invoke(__instance);
+            if (player is null || PlayerIsYourPlayerGetter?.Invoke(player) != true)
+            {
+                return;
+            }
+
+            var weaponInHands = FirearmControllerWeaponGetter?.Invoke(__instance);
+            if (weaponInHands is null || WeaponType?.IsInstanceOfType(weaponInHands) != true)
+            {
+                return;
+            }
+
+            var holsterWeapon = GetHolsterWeapon(player);
+            if (holsterWeapon is null || WeaponType?.IsInstanceOfType(holsterWeapon) != true)
+            {
+                return;
+            }
+
+            if (ReferenceEquals(holsterWeapon, weaponInHands) || AreSameItem(holsterWeapon, weaponInHands))
+            {
+                return;
+            }
+
+            var isVanillaHolsterWeapon = IsVanillaHolsterWeapon(holsterWeapon);
+            if (ShouldOnlyLimitAdditionalWeaponsForHandling() && isVanillaHolsterWeapon)
+            {
+                return;
+            }
+
+            if (isVanillaHolsterWeapon && !HasInstalledStockAttachment(holsterWeapon))
+            {
+                return;
+            }
+
+            if (!ShouldApplyHandlingPenalty(holsterWeapon))
+            {
+                return;
+            }
+
+            __result = Math.Max(0f, __result - GetHandlingErgoPenalty());
+        }
+
+        private static Type? ResolveFirearmControllerType()
+        {
+            return AccessTools.TypeByName("EFT.Player+FirearmController")
+                ?? AccessTools.Inner(PlayerType, "FirearmController");
+        }
+
+        private static MethodInfo? ResolveGetEquipmentSlotMethod()
+        {
+            if (InventoryEquipmentType is null || EquipmentSlotType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(InventoryEquipmentType, "GetSlot", [EquipmentSlotType]);
+        }
+
+        private static object? ResolveHolsterEquipmentSlotValue()
+        {
+            if (EquipmentSlotType is null)
+            {
+                return null;
+            }
+
+            return Enum.Parse(EquipmentSlotType, "Holster");
+        }
+
+        private static object? GetHolsterWeapon(object player)
+        {
+            var equipment = PlayerEquipmentGetter?.Invoke(player);
+            if (equipment is null)
+            {
+                return null;
+            }
+
+            var holsterSlot = GetEquipmentSlotCaller?.Invoke(equipment, HolsterEquipmentSlotValue!);
+            return holsterSlot is null ? null : SlotContainedItemGetter?.Invoke(holsterSlot);
+        }
+
+        private static bool AreSameItem(object left, object right)
+        {
+            var leftId = ItemIdGetter?.Invoke(left);
+            var rightId = ItemIdGetter?.Invoke(right);
+            return !string.IsNullOrWhiteSpace(leftId)
+                && !string.IsNullOrWhiteSpace(rightId)
+                && string.Equals(leftId, rightId, StringComparison.Ordinal);
+        }
+
+        private static bool ShouldApplyHandlingPenalty(object holsterWeapon)
+        {
+            var foldable = GetFoldableCaller?.Invoke(holsterWeapon);
+            if (foldable is not null)
+            {
+                return WeaponFoldedGetter?.Invoke(holsterWeapon) != true;
+            }
+
+            return ShouldIncludeNonFoldableWeaponsForHandling();
+        }
+
+        private static bool IsVanillaHolsterWeapon(object weapon)
+        {
+            var template = ItemTemplateGetter?.Invoke(weapon);
+            if (template is null)
+            {
+                return false;
+            }
+
+            var templateId = ItemTemplateStringIdGetter?.Invoke(template);
+            if (string.Equals(templateId, SignalPistolTemplateId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var parentTemplate = ItemTemplateParentGetter?.Invoke(template);
+            var parentId = parentTemplate is null ? null : ItemTemplateStringIdGetter?.Invoke(parentTemplate);
+
+            return string.Equals(parentId, PistolCategoryId, StringComparison.Ordinal)
+                || string.Equals(parentId, RevolverCategoryId, StringComparison.Ordinal);
+        }
+
+        private static bool HasInstalledStockAttachment(object weapon)
+        {
+            if (!CanInspectWeaponAttachments)
+            {
+                return false;
+            }
+
+            System.Collections.IEnumerable? allItems;
+            try
+            {
+                allItems = GetAllItemsCaller?.Invoke(weapon) as System.Collections.IEnumerable;
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (allItems is null)
+            {
+                return false;
+            }
+
+            var weaponId = ItemIdGetter?.Invoke(weapon);
+            foreach (var item in allItems)
+            {
+                if (item is null || ReferenceEquals(item, weapon))
+                {
+                    continue;
+                }
+
+                var itemId = ItemIdGetter?.Invoke(item);
+                if (!string.IsNullOrWhiteSpace(weaponId) && string.Equals(itemId, weaponId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var template = ItemTemplateGetter?.Invoke(item);
+                if (template is null)
+                {
+                    continue;
+                }
+
+                var parentTemplate = ItemTemplateParentGetter?.Invoke(template);
+                var parentId = parentTemplate is null ? null : ItemTemplateStringIdGetter?.Invoke(parentTemplate);
+                if (string.Equals(parentId, StockCategoryId, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Type? GetMemberType(MemberInfo? member)
+        {
+            return member switch
+            {
+                PropertyInfo property => property.PropertyType,
+                FieldInfo field => field.FieldType,
+                _ => null,
+            };
+        }
+
+        private static PropertyInfo? FindProperty(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Property(type, name);
+        }
+
+        private static FieldInfo? FindField(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Field(type, name);
+        }
+
+        private static MethodInfo? FindMethod(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Method(type, name);
+        }
+
+        private static TDelegate? CreateGetter<TDelegate>(MemberInfo? member) where TDelegate : Delegate
+        {
+            if (member is null)
+            {
+                return null;
+            }
+
+            var invokeMethod = typeof(TDelegate).GetMethod("Invoke");
+            if (invokeMethod is null)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            Expression memberAccess = member switch
+            {
+                PropertyInfo property => Expression.Property(Expression.Convert(instanceParameter, property.DeclaringType!), property),
+                FieldInfo field => Expression.Field(Expression.Convert(instanceParameter, field.DeclaringType!), field),
+                _ => throw new NotSupportedException($"Unsupported member type: {member.MemberType}"),
+            };
+
+            if (memberAccess.Type != invokeMethod.ReturnType)
+            {
+                memberAccess = Expression.Convert(memberAccess, invokeMethod.ReturnType);
+            }
+
+            return Expression.Lambda<TDelegate>(memberAccess, instanceParameter).Compile();
+        }
+
+        private static ObjectMethodCaller? CreateMethodCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var call = Expression.Call(Expression.Convert(instanceParameter, method.DeclaringType!), method);
+            Expression body = call.Type == typeof(void)
+                ? Expression.Block(call, Expression.Constant(null, typeof(object)))
+                : Expression.Convert(call, typeof(object));
+            return Expression.Lambda<ObjectMethodCaller>(body, instanceParameter).Compile();
+        }
+
+        private static ObjectMethodWithObjectCaller? CreateMethodWithObjectCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 1)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var arg0Parameter = Expression.Parameter(typeof(object), "arg0");
+            var call = Expression.Call(
+                Expression.Convert(instanceParameter, method.DeclaringType!),
+                method,
+                Expression.Convert(arg0Parameter, parameters[0].ParameterType)
+            );
+
+            return Expression.Lambda<ObjectMethodWithObjectCaller>(
+                Expression.Convert(call, typeof(object)),
+                instanceParameter,
+                arg0Parameter
+            ).Compile();
+        }
+    }
+
+    [HarmonyPatch]
+    private static class HolsterHandlingInventoryRefreshPatch
+    {
+        private delegate object? ObjectGetter(object instance);
+        private delegate bool BoolGetter(object instance);
+        private delegate object? ObjectMethodCaller(object instance);
+
+        private static readonly Type? PlayerType = AccessTools.TypeByName("EFT.Player");
+        private static readonly Type? FirearmControllerType = ResolveFirearmControllerType();
+        private static readonly MethodBase? SetInventoryOpenedMethod = AccessTools.Method(FirearmControllerType, "SetInventoryOpened", [typeof(bool)]);
+        private static readonly ObjectGetter? FirearmControllerPlayerGetter = CreateGetter<ObjectGetter>(FindField(FirearmControllerType, "_player"));
+        private static readonly BoolGetter? PlayerIsYourPlayerGetter = CreateGetter<BoolGetter>(FindProperty(PlayerType, "IsYourPlayer"));
+        private static readonly ObjectMethodCaller? WeaponModifiedCaller = CreateMethodCaller(FindMethod(FirearmControllerType, "WeaponModified"));
+
+        private static readonly bool CanRefreshHandlingPenalty =
+            FirearmControllerPlayerGetter is not null
+            && PlayerIsYourPlayerGetter is not null
+            && WeaponModifiedCaller is not null;
+
+        private static MethodBase? TargetMethod()
+        {
+            if (SetInventoryOpenedMethod is null)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve FirearmController.SetInventoryOpened. Holster handling refresh is disabled.");
+                return null;
+            }
+
+            if (!CanRefreshHandlingPenalty)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve required inventory refresh members. Holster handling refresh is disabled.");
+            }
+
+            return SetInventoryOpenedMethod;
+        }
+
+        private static void Postfix(object __instance, bool __0)
+        {
+            if (__0 || !CanRefreshHandlingPenalty)
+            {
+                return;
+            }
+
+            var player = FirearmControllerPlayerGetter?.Invoke(__instance);
+            if (player is null || PlayerIsYourPlayerGetter?.Invoke(player) != true)
+            {
+                return;
+            }
+
+            try
+            {
+                WeaponModifiedCaller?.Invoke(__instance);
+            }
+            catch
+            {
+            }
+        }
+
+        private static Type? ResolveFirearmControllerType()
+        {
+            return AccessTools.TypeByName("EFT.Player+FirearmController")
+                ?? AccessTools.Inner(PlayerType, "FirearmController");
+        }
+
+        private static PropertyInfo? FindProperty(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Property(type, name);
+        }
+
+        private static FieldInfo? FindField(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Field(type, name);
+        }
+
+        private static MethodInfo? FindMethod(Type? type, string name)
+        {
+            return type is null ? null : AccessTools.Method(type, name);
+        }
+
+        private static TDelegate? CreateGetter<TDelegate>(MemberInfo? member) where TDelegate : Delegate
+        {
+            if (member is null)
+            {
+                return null;
+            }
+
+            var invokeMethod = typeof(TDelegate).GetMethod("Invoke");
+            if (invokeMethod is null)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            Expression memberAccess = member switch
+            {
+                PropertyInfo property => Expression.Property(Expression.Convert(instanceParameter, property.DeclaringType!), property),
+                FieldInfo field => Expression.Field(Expression.Convert(instanceParameter, field.DeclaringType!), field),
+                _ => throw new NotSupportedException($"Unsupported member type: {member.MemberType}"),
+            };
+
+            if (memberAccess.Type != invokeMethod.ReturnType)
+            {
+                memberAccess = Expression.Convert(memberAccess, invokeMethod.ReturnType);
+            }
+
+            return Expression.Lambda<TDelegate>(memberAccess, instanceParameter).Compile();
+        }
+
+        private static ObjectMethodCaller? CreateMethodCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var call = Expression.Call(Expression.Convert(instanceParameter, method.DeclaringType!), method);
+            Expression body = call.Type == typeof(void)
+                ? Expression.Block(call, Expression.Constant(null, typeof(object)))
+                : Expression.Convert(call, typeof(object));
+            return Expression.Lambda<ObjectMethodCaller>(body, instanceParameter).Compile();
         }
     }
 }
