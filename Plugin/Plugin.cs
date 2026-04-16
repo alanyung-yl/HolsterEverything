@@ -13,6 +13,8 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     private const string PluginName = "HolsterEverything";
     private const string PluginVersion = "1.2.0";
     private const string HolsterSlotName = "Holster";
+    private const string PistolCategoryId = "5447b5cf4bdc2d65278b4567";
+    private const string RevolverCategoryId = "617f1ef5e8b54b0998387733";
 
     private static HolsterEverythingClientPlugin? _instance;
     private Harmony? _harmony;
@@ -20,6 +22,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     private readonly Dictionary<string, ConfigEntry<bool>> _categoryToggles = new(StringComparer.OrdinalIgnoreCase);
     private ConfigEntry<bool>? _enableAllWeapons;
     private ConfigEntry<bool>? _enableHolsterSizeLimit;
+    private ConfigEntry<bool>? _onlyLimitNonVanillaWeapons;
     private ConfigEntry<bool>? _ignoreFoldState;
     private ConfigEntry<int>? _maxHolsterWidth;
     private ConfigEntry<int>? _maxHolsterHeight;
@@ -45,19 +48,20 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         _harmony = new Harmony(PluginGuid);
 
         _enableAllWeapons = Config.Bind(
-            "General (Restart server to apply changes)",
-            "EnableAllWeapons",
+            "General (Restart Server)",
+            "Enable All Weapons",
             true,
-            "When true, allows all weapon categories in holster."
+            "When true, all weapon categories can be equipped in the holster slot."
         );
 
         foreach (var categoryName in WeaponCategoryNames)
         {
+            var displayName = GetCategoryDisplayName(categoryName);
             var entry = Config.Bind(
-                "Weapon Categories (Restart server to apply changes)",
-                categoryName,
+                "Weapon Categories (Restart Server)",
+                displayName,
                 false,
-                $"Allow {categoryName} weapons in holster when EnableAllWeapons is false."
+                $"When true, allows {displayName} weapons in the holster when Enable All Weapons is off."
             );
 
             entry.SettingChanged += (_, _) => SaveServerConfig();
@@ -66,45 +70,52 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
         _enableAllWeapons.SettingChanged += (_, _) => SaveServerConfig();
 
-        var sizeSection = "Holster Size (Apply immediately)";
+        var sizeSection = "Holster Size (Apply Immediately)";
 
         _enableHolsterSizeLimit = Config.Bind(
             sizeSection,
-            "EnableHolsterSizeLimit",
+            "Enable Size Limit",
             false,
-            "When true, oversized weapons are rejected before they can be dropped into the holster slot."
+            "When true, oversized weapons are blocked from being dropped into the holster slot."
+        );
+
+        _onlyLimitNonVanillaWeapons = Config.Bind(
+            sizeSection,
+            "Limit Additional Weapons Only",
+            false,
+            "When true, the size limit does not apply to vanilla pistols and revolvers."
         );
 
         _ignoreFoldState = Config.Bind(
             sizeSection,
-            "IgnoreFoldState",
+            "Use Unfolded Size",
             false,
-            "When true, folded weapons are checked against their unfolded size before they can be dropped into the holster slot."
+            "When true, folded weapons are checked using their unfolded size."
         );
 
         _maxHolsterWidth = Config.Bind(
             sizeSection,
-            "MaxHolsterWidth",
+            "Max Holster Width",
             4,
             new ConfigDescription(
-                "Maximum holster weapon width when the client-side size restriction is enabled.",
+                "Maximum holster weapon width when Enable Size Limit is on.",
                 new AcceptableValueRange<int>(1, 10)
             )
         );
 
         _maxHolsterHeight = Config.Bind(
             sizeSection,
-            "MaxHolsterHeight",
+            "Max Holster Height",
             2,
             new ConfigDescription(
-                "Maximum holster weapon height when the client-side size restriction is enabled.",
+                "Maximum holster weapon height when Enable Size Limit is on.",
                 new AcceptableValueRange<int>(1, 10)
             )
         );
 
         SaveServerConfig();
         _harmony.PatchAll(typeof(HolsterEverythingClientPlugin).Assembly);
-        Logger.LogInfo("HolsterEverything BepInEx F12 Configuration Manager sync initialized. Restart SPT server after category changes. Holster size settings apply immediately.");
+        Logger.LogInfo("HolsterEverything BepInEx F12 Configuration Manager sync initialized. Restart SPT server after General or Weapon Categories changes. Holster Size settings apply immediately.");
     }
 
     private void OnDestroy()
@@ -177,6 +188,24 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         return $"\"{escaped}\"";
     }
 
+    private static string GetCategoryDisplayName(string categoryName)
+    {
+        return categoryName switch
+        {
+            "AssaultCarbine" => "Assault Carbine",
+            "AssaultRifle" => "Assault Rifle",
+            "GrenadeLauncher" => "Grenade Launcher",
+            "MachineGun" => "Machine Gun",
+            "MarksmanRifle" => "Marksman Rifle",
+            "RocketLauncher" => "Rocket Launcher",
+            "Shotgun" => "Shotgun",
+            "Smg" => "SMG",
+            "SniperRifle" => "Sniper Rifle",
+            "SpecialWeapon" => "Special Weapon",
+            _ => categoryName,
+        };
+    }
+
     internal static bool IsHolsterSizeLimitEnabled()
     {
         return _instance?._enableHolsterSizeLimit?.Value ?? false;
@@ -195,6 +224,11 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     internal static bool ShouldIgnoreFoldState()
     {
         return _instance?._ignoreFoldState?.Value ?? false;
+    }
+
+    internal static bool ShouldOnlyLimitNonVanillaWeapons()
+    {
+        return _instance?._onlyLimitNonVanillaWeapons?.Value ?? false;
     }
 
     internal static void LogPatchIssue(string message)
@@ -216,6 +250,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private static readonly Type? ItemContextType = AccessTools.TypeByName("ItemContextClass");
         private static readonly Type? ItemContextAbstractType = AccessTools.TypeByName("ItemContextAbstractClass");
         private static readonly Type? OperationType = AccessTools.TypeByName("GStruct153");
+        private static readonly Type? ItemType = AccessTools.TypeByName("EFT.InventoryLogic.Item");
         private static readonly Type? SlotType = AccessTools.TypeByName("EFT.InventoryLogic.Slot");
         private static readonly Type? WeaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
         private static readonly Type? InventoryEquipmentType = AccessTools.TypeByName("EFT.InventoryLogic.InventoryEquipment");
@@ -229,6 +264,11 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private static readonly ObjectGetter? SlotParentItemGetter = CreateGetter<ObjectGetter>(FindProperty(SlotType, "ParentItem"));
         private static readonly ObjectGetter? DraggedItemGetter = CreateGetter<ObjectGetter>(FindField(ItemContextType, "Item"));
         private static readonly ObjectGetter? FallbackDraggedItemGetter = CreateGetter<ObjectGetter>(FindField(ItemContextAbstractType, "Item"));
+        private static readonly MemberInfo? ItemTemplateMember = FindProperty(ItemType, "Template");
+        private static readonly ObjectGetter? ItemTemplateGetter = CreateGetter<ObjectGetter>(ItemTemplateMember);
+        private static readonly Type? ItemTemplateType = GetMemberType(ItemTemplateMember);
+        private static readonly ObjectGetter? ItemTemplateParentGetter = CreateGetter<ObjectGetter>(FindProperty(ItemTemplateType, "Parent"));
+        private static readonly StringGetter? ItemTemplateStringIdGetter = CreateGetter<StringGetter>(FindProperty(ItemTemplateType, "StringId"));
 
         private static readonly MethodInfo? CalculateCellSizeMethod = FindMethod(WeaponType, "CalculateCellSize");
         private static readonly ObjectMethodCaller? CalculateCellSizeCaller = CreateMethodCaller(CalculateCellSizeMethod);
@@ -256,6 +296,11 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             && CalculateCellSizeCaller is not null
             && CellSizeXGetter is not null
             && CellSizeYGetter is not null;
+
+        private static readonly bool CanClassifyVanillaHolsterWeapon =
+            ItemTemplateGetter is not null
+            && ItemTemplateParentGetter is not null
+            && ItemTemplateStringIdGetter is not null;
 
         private static readonly bool CanResolveUnfoldedSize =
             WeaponFoldedGetter is not null
@@ -296,6 +341,11 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
             var draggedItem = GetDraggedItem(__args);
             if (draggedItem is null || WeaponType?.IsInstanceOfType(draggedItem) != true)
+            {
+                return true;
+            }
+
+            if (ShouldOnlyLimitNonVanillaWeapons() && IsVanillaHolsterWeaponCategory(draggedItem))
             {
                 return true;
             }
@@ -393,6 +443,26 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             }
 
             return null;
+        }
+
+        private static bool IsVanillaHolsterWeaponCategory(object weapon)
+        {
+            if (!CanClassifyVanillaHolsterWeapon)
+            {
+                return false;
+            }
+
+            var template = ItemTemplateGetter?.Invoke(weapon);
+            if (template is null)
+            {
+                return false;
+            }
+
+            var parentTemplate = ItemTemplateParentGetter?.Invoke(template);
+            var parentId = parentTemplate is null ? null : ItemTemplateStringIdGetter?.Invoke(parentTemplate);
+
+            return string.Equals(parentId, PistolCategoryId, StringComparison.Ordinal)
+                || string.Equals(parentId, RevolverCategoryId, StringComparison.Ordinal);
         }
 
         private static bool TryGetCurrentSize(object weapon, out int width, out int height)
