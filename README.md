@@ -9,7 +9,7 @@ HolsterEverything is an SPT mod that lets you control which weapon categories ca
 - Other versions may work, but are not guaranteed
 
 ## Download
-- Direct download (`v1.3.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.3.0/HolsterEverything-v1.3.0.7z)
+- Direct download (`v1.3.1`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.3.1/HolsterEverything-v1.3.1.7z)
 
 [![](https://img.shields.io/github/v/release/alanyung-yl/HolsterEverything?display_name=tag&sort=semver)](https://github.com/alanyung-yl/HolsterEverything/releases/latest)
 [![](https://img.shields.io/github/downloads/alanyung-yl/HolsterEverything/total)](https://github.com/alanyung-yl/HolsterEverything/releases)
