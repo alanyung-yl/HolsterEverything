@@ -11,12 +11,13 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 {
     private const string PluginGuid = "com.alanyung-yl.holstereverything.f12config";
     private const string PluginName = "HolsterEverything";
-    private const string PluginVersion = "1.3.0";
+    private const string PluginVersion = "1.3.1";
     private const string HolsterSlotName = "Holster";
     private const string PistolCategoryId = "5447b5cf4bdc2d65278b4567";
     private const string RevolverCategoryId = "617f1ef5e8b54b0998387733";
     private const string StockCategoryId = "55818a594bdc2db9688b456a";
     private const string SignalPistolTemplateId = "620109578d82e67e7911abf2";
+    private const string NoFreeSlotForThatItemMessage = "No free slot for that item";
 
     private static HolsterEverythingClientPlugin? _instance;
     private Harmony? _harmony;
@@ -295,6 +296,92 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         _instance?.Logger.LogWarning(message);
     }
 
+    internal static void ShowNoFreeSlotForThatItemWarning()
+    {
+        NotificationWarning.Show(NoFreeSlotForThatItemMessage);
+    }
+
+    private static class NotificationWarning
+    {
+        private delegate void WarningNotificationCaller(string message, object duration);
+
+        private static readonly Type? NotificationManagerType = AccessTools.TypeByName("NotificationManagerClass");
+        private static readonly Type? NotificationDurationType = AccessTools.TypeByName("EFT.Communications.ENotificationDurationType");
+        private static readonly MethodInfo? DisplayWarningNotificationMethod = ResolveDisplayWarningNotificationMethod();
+        private static readonly WarningNotificationCaller? DisplayWarningNotificationCaller = CreateWarningNotificationCaller();
+        private static readonly object? DefaultNotificationDuration = ResolveDefaultNotificationDuration();
+        private static DateTime _lastWarningAt = DateTime.MinValue;
+
+        internal static void Show(string message)
+        {
+            if (DisplayWarningNotificationCaller is null || DefaultNotificationDuration is null)
+            {
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            if ((now - _lastWarningAt).TotalMilliseconds < 1500)
+            {
+                return;
+            }
+
+            _lastWarningAt = now;
+
+            try
+            {
+                DisplayWarningNotificationCaller(message, DefaultNotificationDuration);
+            }
+            catch
+            {
+            }
+        }
+
+        private static MethodInfo? ResolveDisplayWarningNotificationMethod()
+        {
+            if (NotificationManagerType is null || NotificationDurationType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(NotificationManagerType, "DisplayWarningNotification", [typeof(string), NotificationDurationType]);
+        }
+
+        private static object? ResolveDefaultNotificationDuration()
+        {
+            if (NotificationDurationType is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return Enum.Parse(NotificationDurationType, "Default");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static WarningNotificationCaller? CreateWarningNotificationCaller()
+        {
+            if (DisplayWarningNotificationMethod is null || NotificationDurationType is null)
+            {
+                return null;
+            }
+
+            var messageParameter = Expression.Parameter(typeof(string), "message");
+            var durationParameter = Expression.Parameter(typeof(object), "duration");
+            var call = Expression.Call(
+                DisplayWarningNotificationMethod,
+                messageParameter,
+                Expression.Convert(durationParameter, NotificationDurationType)
+            );
+
+            return Expression.Lambda<WarningNotificationCaller>(call, messageParameter, durationParameter).Compile();
+        }
+    }
+
     [HarmonyPatch]
     private static class HolsterSlotSizeClientPatch
     {
@@ -303,7 +390,10 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private delegate int IntGetter(object instance);
         private delegate bool BoolGetter(object instance);
         private delegate object? ObjectMethodCaller(object instance);
+        private delegate object? ObjectMethodWithTwoObjectsCaller(object instance, object arg0, object arg1);
         private delegate object? ObjectMethodWithBoolCaller(object instance, object arg0, object arg1, bool arg2);
+        private delegate object? ObjectMethodWithObjectBoolTwoObjectsCaller(object instance, object? arg0, bool arg1, object? arg2, object? arg3);
+        private delegate object? ObjectMethodWithTwoIntsCaller(object instance, int arg0, int arg1);
 
         private static readonly Type? SlotViewType = AccessTools.TypeByName("EFT.UI.DragAndDrop.SlotView");
         private static readonly Type? ItemContextType = AccessTools.TypeByName("ItemContextClass");
@@ -311,6 +401,10 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private static readonly Type? OperationType = AccessTools.TypeByName("GStruct153");
         private static readonly Type? ItemType = AccessTools.TypeByName("EFT.InventoryLogic.Item");
         private static readonly Type? SlotType = AccessTools.TypeByName("EFT.InventoryLogic.Slot");
+        private static readonly Type? ItemAddressType = AccessTools.TypeByName("EFT.InventoryLogic.ItemAddress");
+        private static readonly Type? CompoundItemType = AccessTools.TypeByName("EFT.InventoryLogic.CompoundItem");
+        private static readonly Type? ExtraSizeType = AccessTools.TypeByName("EFT.InventoryLogic.ExtraSize");
+        private static readonly Type? IncompatibleItemErrorType = AccessTools.TypeByName("GClass1585");
         private static readonly Type? WeaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
         private static readonly Type? InventoryEquipmentType = AccessTools.TypeByName("EFT.InventoryLogic.InventoryEquipment");
 
@@ -323,11 +417,15 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private static readonly ObjectGetter? SlotParentItemGetter = CreateGetter<ObjectGetter>(FindProperty(SlotType, "ParentItem"));
         private static readonly ObjectGetter? DraggedItemGetter = CreateGetter<ObjectGetter>(FindField(ItemContextType, "Item"));
         private static readonly ObjectGetter? FallbackDraggedItemGetter = CreateGetter<ObjectGetter>(FindField(ItemContextAbstractType, "Item"));
+        private static readonly ObjectGetter? ItemCurrentAddressGetter = CreateGetter<ObjectGetter>(FindProperty(ItemType, "CurrentAddress"));
+        private static readonly ObjectGetter? ItemAddressContainerGetter = CreateGetter<ObjectGetter>(FindField(ItemAddressType, "Container"));
         private static readonly MemberInfo? ItemTemplateMember = FindProperty(ItemType, "Template");
         private static readonly ObjectGetter? ItemTemplateGetter = CreateGetter<ObjectGetter>(ItemTemplateMember);
         private static readonly Type? ItemTemplateType = GetMemberType(ItemTemplateMember);
         private static readonly ObjectGetter? ItemTemplateParentGetter = CreateGetter<ObjectGetter>(FindProperty(ItemTemplateType, "Parent"));
         private static readonly StringGetter? ItemTemplateStringIdGetter = CreateGetter<StringGetter>(FindProperty(ItemTemplateType, "StringId"));
+        private static readonly IntGetter? ItemWidthGetter = CreateGetter<IntGetter>(FindProperty(ItemType, "Width"));
+        private static readonly IntGetter? ItemHeightGetter = CreateGetter<IntGetter>(FindProperty(ItemType, "Height"));
 
         private static readonly MethodInfo? CalculateCellSizeMethod = FindMethod(WeaponType, "CalculateCellSize");
         private static readonly ObjectMethodCaller? CalculateCellSizeCaller = CreateMethodCaller(CalculateCellSizeMethod);
@@ -343,18 +441,39 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private static readonly ObjectMethodCaller? GetFoldableCaller = CreateMethodCaller(GetFoldableMethod);
         private static readonly MethodInfo? GetSizeAfterFoldingMethod = ResolveGetSizeAfterFoldingMethod();
         private static readonly ObjectMethodWithBoolCaller? GetSizeAfterFoldingCaller = CreateMethodWithBoolCaller(GetSizeAfterFoldingMethod);
+        private static readonly ObjectMethodCaller? CreateItemAddressCaller = CreateMethodCaller(FindMethod(SlotType, "CreateItemAddress"));
+        private static readonly MethodInfo? GetSizeAfterAttachmentMethod = ResolveGetSizeAfterAttachmentMethod();
+        private static readonly ObjectMethodWithTwoObjectsCaller? GetSizeAfterAttachmentCaller = CreateMethodWithTwoObjectsCaller(GetSizeAfterAttachmentMethod);
+        private static readonly MethodInfo? CalculateExtraSizeMethod = ResolveCalculateExtraSizeMethod();
+        private static readonly ObjectMethodWithObjectBoolTwoObjectsCaller? CalculateExtraSizeCaller = CreateMethodWithObjectBoolTwoObjectsCaller(CalculateExtraSizeMethod);
+        private static readonly ObjectMethodWithTwoIntsCaller? ExtraSizeApplyCaller = CreateMethodWithTwoIntsCaller(ResolveExtraSizeApplyMethod());
 
-        private static readonly bool CanValidateHolsterSize =
+        private static readonly bool CanValidateWeaponSize =
             WeaponType is not null
             && InventoryEquipmentType is not null
-            && (SlotGetter is not null || SlotFieldGetter is not null)
             && SlotIdGetter is not null
             && SlotNameGetter is not null
             && SlotParentItemGetter is not null
-            && (DraggedItemGetter is not null || FallbackDraggedItemGetter is not null)
             && CalculateCellSizeCaller is not null
             && CellSizeXGetter is not null
             && CellSizeYGetter is not null;
+
+        private static readonly bool CanValidateHolsterSize =
+            CanValidateWeaponSize
+            && (SlotGetter is not null || SlotFieldGetter is not null)
+            && (DraggedItemGetter is not null || FallbackDraggedItemGetter is not null);
+
+        internal static readonly bool CanValidateInventoryMoveSize =
+            CanValidateWeaponSize
+            && SlotType is not null
+            && ItemCurrentAddressGetter is not null
+            && ItemAddressContainerGetter is not null;
+
+        private static readonly bool CanValidateHolsteredAttachmentSize =
+            CanValidateInventoryMoveSize
+            && CompoundItemType is not null
+            && CreateItemAddressCaller is not null
+            && GetSizeAfterAttachmentCaller is not null;
 
         private static readonly bool CanClassifyVanillaHolsterWeapon =
             ItemTemplateGetter is not null
@@ -369,6 +488,17 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             && CellSizeXGetter is not null
             && CellSizeYGetter is not null;
 
+        private static readonly bool CanResolveUnfoldedAttachmentSize =
+            CanValidateHolsteredAttachmentSize
+            && WeaponFoldedGetter is not null
+            && GetFoldableCaller is not null
+            && CalculateExtraSizeCaller is not null
+            && ExtraSizeApplyCaller is not null
+            && ItemWidthGetter is not null
+            && ItemHeightGetter is not null
+            && CellSizeXGetter is not null
+            && CellSizeYGetter is not null;
+
         private static MethodBase? TargetMethod()
         {
             if (CanAcceptMethod is null)
@@ -380,6 +510,11 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             if (!CanValidateHolsterSize)
             {
                 LogPatchIssue("HolsterEverything client patch could not resolve required drag-drop members. Holster size validation is disabled.");
+            }
+
+            if (!CanValidateHolsteredAttachmentSize)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve required attachment members. Holstered weapon attachment size validation is disabled.");
             }
 
             return CanAcceptMethod;
@@ -399,47 +534,76 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             }
 
             var draggedItem = GetDraggedItem(__args);
-            if (draggedItem is null || WeaponType?.IsInstanceOfType(draggedItem) != true)
+            if (draggedItem is null)
             {
                 return true;
             }
 
-            if (ShouldOnlyLimitNonVanillaWeapons() && IsVanillaHolsterWeapon(draggedItem))
+            if (WeaponType?.IsInstanceOfType(draggedItem) == true && IsHolsterSlot(slot))
             {
+                if (ShouldBlockHolsterWeapon(draggedItem))
+                {
+                    SetIncompatibleOperation(__args, draggedItem);
+                    __result = false;
+                    return false;
+                }
+
                 return true;
             }
 
-            var maxWidth = GetMaxHolsterWidth();
-            var maxHeight = GetMaxHolsterHeight();
-
-            if (!TryGetCurrentSize(draggedItem, out var width, out var height))
+            if (ShouldBlockHolsteredWeaponAttachment(slot, draggedItem))
             {
-                return true;
-            }
-
-            if (width > maxWidth || height > maxHeight)
-            {
+                SetIncompatibleOperation(__args, draggedItem);
                 __result = false;
                 return false;
             }
 
-            if (!ShouldIgnoreFoldState() || WeaponFoldedGetter?.Invoke(draggedItem) != true)
+            return true;
+        }
+
+        internal static bool ShouldBlockMoveToAddress(object? item, object? targetAddress)
+        {
+            if (!IsHolsterSizeLimitEnabled() || !CanValidateInventoryMoveSize || item is null || targetAddress is null)
             {
-                return true;
+                return false;
             }
 
-            if (!TryGetUnfoldedSize(draggedItem, out width, out height))
+            var targetContainer = ItemAddressContainerGetter?.Invoke(targetAddress);
+            if (targetContainer is null || SlotType?.IsInstanceOfType(targetContainer) != true)
             {
-                return true;
+                return false;
             }
 
-            if (width <= maxWidth && height <= maxHeight)
+            if (WeaponType?.IsInstanceOfType(item) == true && IsHolsterSlot(targetContainer))
             {
-                return true;
+                return ShouldBlockHolsterWeapon(item);
             }
 
-            __result = false;
-            return false;
+            return ShouldBlockHolsteredWeaponAttachment(targetContainer, item);
+        }
+
+        internal static bool ShouldBlockWeaponMoveToHolsterAddress(object? item, object? targetAddress)
+        {
+            if (!IsHolsterSizeLimitEnabled() || !CanValidateInventoryMoveSize || item is null || targetAddress is null)
+            {
+                return false;
+            }
+
+            if (WeaponType?.IsInstanceOfType(item) != true)
+            {
+                return false;
+            }
+
+            var targetContainer = ItemAddressContainerGetter?.Invoke(targetAddress);
+            return targetContainer is not null
+                && SlotType?.IsInstanceOfType(targetContainer) == true
+                && IsHolsterSlot(targetContainer)
+                && ShouldBlockHolsterWeapon(item);
+        }
+
+        internal static bool ShouldBlockSwap(object? item, object? targetAddress, object? otherItem, object? otherTargetAddress)
+        {
+            return ShouldBlockMoveToAddress(item, targetAddress) || ShouldBlockMoveToAddress(otherItem, otherTargetAddress);
         }
 
         private static MethodBase? ResolveCanAcceptMethod()
@@ -463,6 +627,37 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             }
 
             return AccessTools.Method(WeaponType, "GetSizeAfterFolding", [currentAddressType, foldableType, typeof(bool)]);
+        }
+
+        private static MethodInfo? ResolveGetSizeAfterAttachmentMethod()
+        {
+            if (CompoundItemType is null || ItemAddressType is null || ItemType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(CompoundItemType, "GetSizeAfterAttachment", [ItemAddressType, ItemType]);
+        }
+
+        private static MethodInfo? ResolveCalculateExtraSizeMethod()
+        {
+            var foldableType = GetFoldableMethod?.ReturnType;
+            if (CompoundItemType is null || foldableType is null || SlotType is null || ItemType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(CompoundItemType, "CalculateExtraSize", [foldableType, typeof(bool), SlotType, ItemType]);
+        }
+
+        private static MethodInfo? ResolveExtraSizeApplyMethod()
+        {
+            if (ExtraSizeType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(ExtraSizeType, "Apply", [typeof(int), typeof(int)]);
         }
 
         private static object? GetSlot(object slotView)
@@ -530,6 +725,137 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                 || string.Equals(parentId, RevolverCategoryId, StringComparison.Ordinal);
         }
 
+        private static void SetIncompatibleOperation(object[] args, object item)
+        {
+            if (args.Length < 3 || OperationType is null || IncompatibleItemErrorType is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var error = Activator.CreateInstance(IncompatibleItemErrorType, item, null);
+                if (error is null)
+                {
+                    return;
+                }
+
+                args[2] = Activator.CreateInstance(OperationType, error);
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool ShouldBlockHolsterWeapon(object weapon)
+        {
+            if (ShouldOnlyLimitNonVanillaWeapons() && IsVanillaHolsterWeapon(weapon))
+            {
+                return false;
+            }
+
+            var maxWidth = GetMaxHolsterWidth();
+            var maxHeight = GetMaxHolsterHeight();
+
+            if (!TryGetCurrentSize(weapon, out var width, out var height))
+            {
+                return false;
+            }
+
+            if (width > maxWidth || height > maxHeight)
+            {
+                return true;
+            }
+
+            if (!ShouldIgnoreFoldState() || WeaponFoldedGetter?.Invoke(weapon) != true)
+            {
+                return false;
+            }
+
+            if (!TryGetUnfoldedSize(weapon, out width, out height))
+            {
+                return false;
+            }
+
+            return width > maxWidth || height > maxHeight;
+        }
+
+        private static bool ShouldBlockHolsteredWeaponAttachment(object targetSlot, object attachedItem)
+        {
+            if (!CanValidateHolsteredAttachmentSize)
+            {
+                return false;
+            }
+
+            var holsterWeapon = FindHolsteredWeaponForSlot(targetSlot);
+            if (holsterWeapon is null)
+            {
+                return false;
+            }
+
+            if (ShouldOnlyLimitNonVanillaWeapons() && IsVanillaHolsterWeapon(holsterWeapon))
+            {
+                return false;
+            }
+
+            var maxWidth = GetMaxHolsterWidth();
+            var maxHeight = GetMaxHolsterHeight();
+
+            if (!TryGetSizeAfterAttachment(holsterWeapon, targetSlot, attachedItem, out var width, out var height))
+            {
+                return false;
+            }
+
+            if (width > maxWidth || height > maxHeight)
+            {
+                return true;
+            }
+
+            if (!ShouldIgnoreFoldState() || WeaponFoldedGetter?.Invoke(holsterWeapon) != true)
+            {
+                return false;
+            }
+
+            if (!TryGetUnfoldedSizeAfterAttachment(holsterWeapon, targetSlot, attachedItem, out width, out height))
+            {
+                return false;
+            }
+
+            return width > maxWidth || height > maxHeight;
+        }
+
+        private static object? FindHolsteredWeaponForSlot(object targetSlot)
+        {
+            var parentItem = SlotParentItemGetter?.Invoke(targetSlot);
+            while (parentItem is not null)
+            {
+                if (WeaponType?.IsInstanceOfType(parentItem) == true && IsItemInHolsterSlot(parentItem))
+                {
+                    return parentItem;
+                }
+
+                parentItem = GetParentItem(parentItem);
+            }
+
+            return null;
+        }
+
+        private static object? GetParentItem(object item)
+        {
+            var currentAddress = ItemCurrentAddressGetter?.Invoke(item);
+            var parentContainer = currentAddress is null ? null : ItemAddressContainerGetter?.Invoke(currentAddress);
+            return parentContainer is not null && SlotType?.IsInstanceOfType(parentContainer) == true
+                ? SlotParentItemGetter?.Invoke(parentContainer)
+                : null;
+        }
+
+        private static bool IsItemInHolsterSlot(object item)
+        {
+            var currentAddress = ItemCurrentAddressGetter?.Invoke(item);
+            var container = currentAddress is null ? null : ItemAddressContainerGetter?.Invoke(currentAddress);
+            return container is not null && SlotType?.IsInstanceOfType(container) == true && IsHolsterSlot(container);
+        }
+
         private static bool TryGetCurrentSize(object weapon, out int width, out int height)
         {
             width = 0;
@@ -570,6 +896,66 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                 }
 
                 var cellSize = GetSizeAfterFoldingCaller?.Invoke(weapon, currentAddress, foldable, false);
+                return TryReadCellSize(cellSize, out width, out height);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetSizeAfterAttachment(object weapon, object targetSlot, object attachedItem, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+
+            if (!CanValidateHolsteredAttachmentSize)
+            {
+                return false;
+            }
+
+            try
+            {
+                var targetAddress = CreateItemAddressCaller?.Invoke(targetSlot);
+                if (targetAddress is null)
+                {
+                    return false;
+                }
+
+                var cellSize = GetSizeAfterAttachmentCaller?.Invoke(weapon, targetAddress, attachedItem);
+                return TryReadCellSize(cellSize, out width, out height);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetUnfoldedSizeAfterAttachment(object weapon, object targetSlot, object attachedItem, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+
+            if (!CanResolveUnfoldedAttachmentSize)
+            {
+                return false;
+            }
+
+            try
+            {
+                var foldable = GetFoldableCaller?.Invoke(weapon);
+                if (foldable is null || ItemWidthGetter is null || ItemHeightGetter is null)
+                {
+                    return false;
+                }
+
+                var extraSize = CalculateExtraSizeCaller?.Invoke(weapon, foldable, false, targetSlot, attachedItem);
+                if (extraSize is null)
+                {
+                    return false;
+                }
+
+                var cellSize = ExtraSizeApplyCaller?.Invoke(extraSize, ItemWidthGetter(weapon), ItemHeightGetter(weapon));
                 return TryReadCellSize(cellSize, out width, out height);
             }
             catch
@@ -667,6 +1053,37 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             return Expression.Lambda<ObjectMethodCaller>(body, instanceParameter).Compile();
         }
 
+        private static ObjectMethodWithTwoObjectsCaller? CreateMethodWithTwoObjectsCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 2)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var arg0Parameter = Expression.Parameter(typeof(object), "arg0");
+            var arg1Parameter = Expression.Parameter(typeof(object), "arg1");
+            var call = Expression.Call(
+                Expression.Convert(instanceParameter, method.DeclaringType!),
+                method,
+                Expression.Convert(arg0Parameter, parameters[0].ParameterType),
+                Expression.Convert(arg1Parameter, parameters[1].ParameterType)
+            );
+
+            return Expression.Lambda<ObjectMethodWithTwoObjectsCaller>(
+                Expression.Convert(call, typeof(object)),
+                instanceParameter,
+                arg0Parameter,
+                arg1Parameter
+            ).Compile();
+        }
+
         private static ObjectMethodWithBoolCaller? CreateMethodWithBoolCaller(MethodInfo? method)
         {
             if (method is null)
@@ -700,6 +1117,189 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                 arg1Parameter,
                 arg2Parameter
             ).Compile();
+        }
+
+        private static ObjectMethodWithObjectBoolTwoObjectsCaller? CreateMethodWithObjectBoolTwoObjectsCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 4)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var arg0Parameter = Expression.Parameter(typeof(object), "arg0");
+            var arg1Parameter = Expression.Parameter(typeof(bool), "arg1");
+            var arg2Parameter = Expression.Parameter(typeof(object), "arg2");
+            var arg3Parameter = Expression.Parameter(typeof(object), "arg3");
+            var call = Expression.Call(
+                Expression.Convert(instanceParameter, method.DeclaringType!),
+                method,
+                Expression.Convert(arg0Parameter, parameters[0].ParameterType),
+                Expression.Convert(arg1Parameter, parameters[1].ParameterType),
+                Expression.Convert(arg2Parameter, parameters[2].ParameterType),
+                Expression.Convert(arg3Parameter, parameters[3].ParameterType)
+            );
+
+            return Expression.Lambda<ObjectMethodWithObjectBoolTwoObjectsCaller>(
+                Expression.Convert(call, typeof(object)),
+                instanceParameter,
+                arg0Parameter,
+                arg1Parameter,
+                arg2Parameter,
+                arg3Parameter
+            ).Compile();
+        }
+
+        private static ObjectMethodWithTwoIntsCaller? CreateMethodWithTwoIntsCaller(MethodInfo? method)
+        {
+            if (method is null)
+            {
+                return null;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 2)
+            {
+                return null;
+            }
+
+            var instanceParameter = Expression.Parameter(typeof(object), "instance");
+            var arg0Parameter = Expression.Parameter(typeof(int), "arg0");
+            var arg1Parameter = Expression.Parameter(typeof(int), "arg1");
+            var call = Expression.Call(
+                Expression.Convert(instanceParameter, method.DeclaringType!),
+                method,
+                Expression.Convert(arg0Parameter, parameters[0].ParameterType),
+                Expression.Convert(arg1Parameter, parameters[1].ParameterType)
+            );
+
+            return Expression.Lambda<ObjectMethodWithTwoIntsCaller>(
+                Expression.Convert(call, typeof(object)),
+                instanceParameter,
+                arg0Parameter,
+                arg1Parameter
+            ).Compile();
+        }
+    }
+
+    [HarmonyPatch]
+    private static class HolsterInventoryMoveSizePatch
+    {
+        private static readonly Type? InteractionsHandlerType = AccessTools.TypeByName("InteractionsHandlerClass");
+        private static readonly Type? ItemType = AccessTools.TypeByName("EFT.InventoryLogic.Item");
+        private static readonly Type? ItemAddressType = AccessTools.TypeByName("EFT.InventoryLogic.ItemAddress");
+        private static readonly Type? TraderControllerType = AccessTools.TypeByName("TraderControllerClass");
+
+        private static readonly MethodBase? MoveMethod = ResolveMoveMethod();
+        private static readonly MethodBase? SwapMethod = ResolveSwapMethod();
+
+        private static IEnumerable<MethodBase> TargetMethods()
+        {
+            if (MoveMethod is null)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve InteractionsHandlerClass.Move. Alt-click holster size validation is disabled.");
+            }
+            else
+            {
+                yield return MoveMethod;
+            }
+
+            if (SwapMethod is null)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve InteractionsHandlerClass.Swap. Swap holster size validation is disabled.");
+            }
+            else
+            {
+                yield return SwapMethod;
+            }
+
+            if (!HolsterSlotSizeClientPatch.CanValidateInventoryMoveSize)
+            {
+                LogPatchIssue("HolsterEverything client patch could not resolve required inventory move members. Alt-click holster size validation is disabled.");
+            }
+        }
+
+        private static bool Prefix(MethodBase __originalMethod, object[] __args, ref object __result)
+        {
+            if (__originalMethod == MoveMethod)
+            {
+                var item = __args.Length > 0 ? __args[0] : null;
+                var targetAddress = __args.Length > 1 ? __args[1] : null;
+                if (!HolsterSlotSizeClientPatch.ShouldBlockMoveToAddress(item, targetAddress))
+                {
+                    return true;
+                }
+
+                if (HolsterSlotSizeClientPatch.ShouldBlockWeaponMoveToHolsterAddress(item, targetAddress))
+                {
+                    ShowNoFreeSlotForThatItemWarning();
+                }
+
+                __result = CreateFailureResult(__originalMethod);
+                return false;
+            }
+
+            if (__originalMethod == SwapMethod)
+            {
+                var item = __args.Length > 0 ? __args[0] : null;
+                var targetAddress = __args.Length > 1 ? __args[1] : null;
+                var otherItem = __args.Length > 2 ? __args[2] : null;
+                var otherTargetAddress = __args.Length > 3 ? __args[3] : null;
+                if (!HolsterSlotSizeClientPatch.ShouldBlockSwap(item, targetAddress, otherItem, otherTargetAddress))
+                {
+                    return true;
+                }
+
+                if (HolsterSlotSizeClientPatch.ShouldBlockWeaponMoveToHolsterAddress(item, targetAddress)
+                    || HolsterSlotSizeClientPatch.ShouldBlockWeaponMoveToHolsterAddress(otherItem, otherTargetAddress))
+                {
+                    ShowNoFreeSlotForThatItemWarning();
+                }
+
+                __result = CreateFailureResult(__originalMethod);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static MethodBase? ResolveMoveMethod()
+        {
+            if (InteractionsHandlerType is null || ItemType is null || ItemAddressType is null || TraderControllerType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(InteractionsHandlerType, "Move", [ItemType, ItemAddressType, TraderControllerType, typeof(bool)]);
+        }
+
+        private static MethodBase? ResolveSwapMethod()
+        {
+            if (InteractionsHandlerType is null || ItemType is null || ItemAddressType is null || TraderControllerType is null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(InteractionsHandlerType, "Swap", [ItemType, ItemAddressType, ItemType, ItemAddressType, TraderControllerType, typeof(bool)]);
+        }
+
+        private static object CreateFailureResult(MethodBase method)
+        {
+            var returnType = (method as MethodInfo)?.ReturnType;
+            var errorType = AccessTools.TypeByName("GClass1522");
+            if (returnType is null || errorType is null)
+            {
+                return returnType is null ? new object() : Activator.CreateInstance(returnType)!;
+            }
+
+            var error = Activator.CreateInstance(errorType, NoFreeSlotForThatItemMessage);
+            return Activator.CreateInstance(returnType, error)!;
         }
     }
 
