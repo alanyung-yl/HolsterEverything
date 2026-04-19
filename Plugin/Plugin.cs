@@ -11,7 +11,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 {
     private const string PluginGuid = "com.alanyung-yl.holstereverything.f12config";
     private const string PluginName = "HolsterEverything";
-    private const string PluginVersion = "1.3.0";
+    private const string PluginVersion = "1.3.1";
     private const string HolsterSlotName = "Holster";
     private const string PistolCategoryId = "5447b5cf4bdc2d65278b4567";
     private const string RevolverCategoryId = "617f1ef5e8b54b0998387733";
@@ -404,6 +404,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private static readonly Type? ItemAddressType = AccessTools.TypeByName("EFT.InventoryLogic.ItemAddress");
         private static readonly Type? CompoundItemType = AccessTools.TypeByName("EFT.InventoryLogic.CompoundItem");
         private static readonly Type? ExtraSizeType = AccessTools.TypeByName("EFT.InventoryLogic.ExtraSize");
+        private static readonly Type? IncompatibleItemErrorType = AccessTools.TypeByName("GClass1585");
         private static readonly Type? WeaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
         private static readonly Type? InventoryEquipmentType = AccessTools.TypeByName("EFT.InventoryLogic.InventoryEquipment");
 
@@ -542,7 +543,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             {
                 if (ShouldBlockHolsterWeapon(draggedItem))
                 {
-                    ShowNoFreeSlotForThatItemWarning();
+                    SetIncompatibleOperation(__args, draggedItem);
                     __result = false;
                     return false;
                 }
@@ -552,7 +553,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
             if (ShouldBlockHolsteredWeaponAttachment(slot, draggedItem))
             {
-                ShowNoFreeSlotForThatItemWarning();
+                SetIncompatibleOperation(__args, draggedItem);
                 __result = false;
                 return false;
             }
@@ -579,6 +580,25 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             }
 
             return ShouldBlockHolsteredWeaponAttachment(targetContainer, item);
+        }
+
+        internal static bool ShouldBlockWeaponMoveToHolsterAddress(object? item, object? targetAddress)
+        {
+            if (!IsHolsterSizeLimitEnabled() || !CanValidateInventoryMoveSize || item is null || targetAddress is null)
+            {
+                return false;
+            }
+
+            if (WeaponType?.IsInstanceOfType(item) != true)
+            {
+                return false;
+            }
+
+            var targetContainer = ItemAddressContainerGetter?.Invoke(targetAddress);
+            return targetContainer is not null
+                && SlotType?.IsInstanceOfType(targetContainer) == true
+                && IsHolsterSlot(targetContainer)
+                && ShouldBlockHolsterWeapon(item);
         }
 
         internal static bool ShouldBlockSwap(object? item, object? targetAddress, object? otherItem, object? otherTargetAddress)
@@ -703,6 +723,28 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
             return string.Equals(parentId, PistolCategoryId, StringComparison.Ordinal)
                 || string.Equals(parentId, RevolverCategoryId, StringComparison.Ordinal);
+        }
+
+        private static void SetIncompatibleOperation(object[] args, object item)
+        {
+            if (args.Length < 3 || OperationType is null || IncompatibleItemErrorType is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var error = Activator.CreateInstance(IncompatibleItemErrorType, item, null);
+                if (error is null)
+                {
+                    return;
+                }
+
+                args[2] = Activator.CreateInstance(OperationType, error);
+            }
+            catch
+            {
+            }
         }
 
         private static bool ShouldBlockHolsterWeapon(object weapon)
@@ -1194,7 +1236,11 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                     return true;
                 }
 
-                ShowNoFreeSlotForThatItemWarning();
+                if (HolsterSlotSizeClientPatch.ShouldBlockWeaponMoveToHolsterAddress(item, targetAddress))
+                {
+                    ShowNoFreeSlotForThatItemWarning();
+                }
+
                 __result = CreateFailureResult(__originalMethod);
                 return false;
             }
@@ -1210,7 +1256,12 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                     return true;
                 }
 
-                ShowNoFreeSlotForThatItemWarning();
+                if (HolsterSlotSizeClientPatch.ShouldBlockWeaponMoveToHolsterAddress(item, targetAddress)
+                    || HolsterSlotSizeClientPatch.ShouldBlockWeaponMoveToHolsterAddress(otherItem, otherTargetAddress))
+                {
+                    ShowNoFreeSlotForThatItemWarning();
+                }
+
                 __result = CreateFailureResult(__originalMethod);
                 return false;
             }
