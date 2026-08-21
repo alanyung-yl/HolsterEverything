@@ -4,7 +4,7 @@ This folder contains the BepInEx F12 Configuration Manager client plugin that:
 
 - syncs weapon category toggles to:
 
-`<SPT root>/SPT/user/mods/HolsterEverything/config.json`
+`<SPT root>/SPT_Runtime/user/mods/HolsterEverything/config.json`
 
 - provides the client-side holster size restriction settings
 - provides the client-side holster handling penalty settings

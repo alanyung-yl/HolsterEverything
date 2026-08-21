@@ -1,27 +1,27 @@
 using System.Reflection;
 using System.Text.Json;
+using SPTarkov.Common.Models.Logging;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Spt.Mod;
-using SPTarkov.Server.Core.Models.Utils;
-using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Models.Spt.Tables;
 
 namespace HolsterEverything;
 
-public record ModMetadata : AbstractModMetadata
+public record ModMetadata : IModMetadata
 {
-    public override string ModGuid { get; init; } = "com.alanyung-yl.holstereverything";
-    public override string Name { get; init; } = "HolsterEverything";
-    public override string Author { get; init; } = "alanyung-yl";
-    public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.3.1");
-    public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
-    public override List<string>? Incompatibilities { get; init; }
-    public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
-    public override string? Url { get; init; }
-    public override bool? IsBundleMod { get; init; }
-    public override string License { get; init; } = "GNU GPLv3";
+    public string ModGuid { get; init; } = "com.alanyung-yl.holstereverything";
+    public string Name { get; init; } = "HolsterEverything";
+    public string Author { get; init; } = "alanyung-yl";
+    public List<string>? Contributors { get; init; }
+    public SemanticVersioning.Version Version { get; init; } = new("2.0.0");
+    public SemanticVersioning.Range SptVersion { get; init; } = new("~4.1.0");
+    public bool HasPrepatcher { get; init; }
+    public List<string>? Incompatibilities { get; init; }
+    public Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
+    public string? Url { get; init; }
+    public string License { get; init; } = "GNU GPLv3";
 }
 
 public class HolsterEverythingConfig
@@ -31,8 +31,8 @@ public class HolsterEverythingConfig
     public List<string> EnabledWeaponCategoryIds { get; set; } = [];
 }
 
-[Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 1)]
-public class HolsterEverythingPatch(ISptLogger<HolsterEverythingPatch> logger, DatabaseService databaseService) : IOnLoad
+[Injectable(TypePriority = OnLoadOrder.PostLoad + 1)]
+public class HolsterEverythingPatch(ISptLogger<HolsterEverythingPatch> logger, TemplateTable templateTable) : IOnLoad
 {
     private const string LogPrefix = "HolsterEverything:";
     private const string PmcItemTemplateId = "55d7217a4bdc2d86028b456d";
@@ -45,10 +45,10 @@ public class HolsterEverythingPatch(ISptLogger<HolsterEverythingPatch> logger, D
         WriteIndented = true,
     };
 
-    public Task OnLoad()
+    public Task OnLoadAsync(CancellationToken cancellationToken)
     {
         var config = LoadOrCreateConfig();
-        var items = databaseService.GetItems();
+        var items = templateTable.Items;
 
         if (!items.TryGetValue(PmcItemTemplateId, out var pmcTemplate) || pmcTemplate.Properties?.Slots == null)
         {

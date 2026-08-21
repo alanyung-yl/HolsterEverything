@@ -11,15 +11,17 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 {
     private const string PluginGuid = "com.alanyung-yl.holstereverything.f12config";
     private const string PluginName = "HolsterEverything";
-    private const string PluginVersion = "1.3.1";
+    private const string PluginVersion = "2.0.0";
     private const string HolsterSlotName = "Holster";
     private const string PistolCategoryId = "5447b5cf4bdc2d65278b4567";
     private const string RevolverCategoryId = "617f1ef5e8b54b0998387733";
     private const string StockCategoryId = "55818a594bdc2db9688b456a";
     private const string SignalPistolTemplateId = "620109578d82e67e7911abf2";
+    private const string ItemIsIncompatibleMessage = "Item is incompatible";
     private const string NoFreeSlotForThatItemMessage = "No free slot for that item";
 
     private static HolsterEverythingClientPlugin? _instance;
+    private static readonly Type? TextErrorType = ResolveTextErrorType();
     private Harmony? _harmony;
 
     private readonly Dictionary<string, ConfigEntry<bool>> _categoryToggles = new(StringComparer.OrdinalIgnoreCase);
@@ -180,7 +182,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             var enableAllWeapons = _enableAllWeapons?.Value ?? true;
             var json = BuildServerConfigJson(enableAllWeapons, enabledNames);
 
-            var configPath = Path.Combine(Paths.GameRootPath, "SPT", "user", "mods", "HolsterEverything", "config.json");
+            var configPath = Path.Combine(Paths.GameRootPath, "SPT_Runtime", "user", "mods", "HolsterEverything", "config.json");
             var directory = Path.GetDirectoryName(configPath);
             if (!string.IsNullOrWhiteSpace(directory))
             {
@@ -301,11 +303,87 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         NotificationWarning.Show(NoFreeSlotForThatItemMessage);
     }
 
+    private static IEnumerable<Type> GetLoadedTypes()
+    {
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(type => type is not null).Cast<Type>().ToArray();
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var type in types)
+            {
+                yield return type;
+            }
+        }
+    }
+
+    private static MethodInfo? FindLoadedMethod(Func<MethodInfo, bool> predicate)
+    {
+        foreach (var type in GetLoadedTypes())
+        {
+            MethodInfo[] methods;
+            try
+            {
+                methods = type.GetMethods(AccessTools.all);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var method = methods.FirstOrDefault(predicate);
+            if (method is not null)
+            {
+                return method;
+            }
+        }
+
+        return null;
+    }
+
+    private static object? CreateTextError(string message)
+    {
+        return TextErrorType is null ? null : Activator.CreateInstance(TextErrorType, message);
+    }
+
+    private static Type? ResolveTextErrorType()
+    {
+        return GetLoadedTypes().FirstOrDefault(type =>
+            !type.IsAbstract
+            && IsDerivedFrom(type, "Diz.LanguageExtensions.Error")
+            && type.GetConstructor([typeof(string)]) is not null
+            && type.GetField("Error", AccessTools.all)?.FieldType == typeof(string)
+        );
+    }
+
+    private static bool IsDerivedFrom(Type type, string baseTypeFullName)
+    {
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.FullName == baseTypeFullName)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static class NotificationWarning
     {
         private delegate void WarningNotificationCaller(string message, object duration);
 
-        private static readonly Type? NotificationManagerType = AccessTools.TypeByName("NotificationManagerClass");
         private static readonly Type? NotificationDurationType = AccessTools.TypeByName("EFT.Communications.ENotificationDurationType");
         private static readonly MethodInfo? DisplayWarningNotificationMethod = ResolveDisplayWarningNotificationMethod();
         private static readonly WarningNotificationCaller? DisplayWarningNotificationCaller = CreateWarningNotificationCaller();
@@ -338,12 +416,21 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
         private static MethodInfo? ResolveDisplayWarningNotificationMethod()
         {
-            if (NotificationManagerType is null || NotificationDurationType is null)
+            if (NotificationDurationType is null)
             {
                 return null;
             }
 
-            return AccessTools.Method(NotificationManagerType, "DisplayWarningNotification", [typeof(string), NotificationDurationType]);
+            return FindLoadedMethod(method =>
+            {
+                var parameters = method.GetParameters();
+                return method.IsStatic
+                    && method.Name == "DisplayWarningNotification"
+                    && method.ReturnType == typeof(void)
+                    && parameters.Length == 2
+                    && parameters[0].ParameterType == typeof(string)
+                    && parameters[1].ParameterType == NotificationDurationType;
+            });
         }
 
         private static object? ResolveDefaultNotificationDuration()
@@ -396,19 +483,17 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
         private delegate object? ObjectMethodWithTwoIntsCaller(object instance, int arg0, int arg1);
 
         private static readonly Type? SlotViewType = AccessTools.TypeByName("EFT.UI.DragAndDrop.SlotView");
-        private static readonly Type? ItemContextType = AccessTools.TypeByName("ItemContextClass");
-        private static readonly Type? ItemContextAbstractType = AccessTools.TypeByName("ItemContextAbstractClass");
-        private static readonly Type? OperationType = AccessTools.TypeByName("GStruct153");
+        private static readonly MethodInfo? CanAcceptMethod = ResolveCanAcceptMethod();
+        private static readonly Type? ItemContextType = GetParameterType(CanAcceptMethod, 0);
+        private static readonly Type? ItemContextAbstractType = GetParameterType(CanAcceptMethod, 1);
+        private static readonly Type? OperationType = GetParameterType(CanAcceptMethod, 2)?.GetElementType();
         private static readonly Type? ItemType = AccessTools.TypeByName("EFT.InventoryLogic.Item");
         private static readonly Type? SlotType = AccessTools.TypeByName("EFT.InventoryLogic.Slot");
         private static readonly Type? ItemAddressType = AccessTools.TypeByName("EFT.InventoryLogic.ItemAddress");
         private static readonly Type? CompoundItemType = AccessTools.TypeByName("EFT.InventoryLogic.CompoundItem");
         private static readonly Type? ExtraSizeType = AccessTools.TypeByName("EFT.InventoryLogic.ExtraSize");
-        private static readonly Type? IncompatibleItemErrorType = AccessTools.TypeByName("GClass1585");
         private static readonly Type? WeaponType = AccessTools.TypeByName("EFT.InventoryLogic.Weapon");
         private static readonly Type? InventoryEquipmentType = AccessTools.TypeByName("EFT.InventoryLogic.InventoryEquipment");
-
-        private static readonly MethodBase? CanAcceptMethod = ResolveCanAcceptMethod();
 
         private static readonly ObjectGetter? SlotGetter = CreateGetter<ObjectGetter>(FindProperty(SlotViewType, "Slot"));
         private static readonly ObjectGetter? SlotFieldGetter = CreateGetter<ObjectGetter>(FindField(SlotViewType, "slot_0"));
@@ -543,7 +628,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             {
                 if (ShouldBlockHolsterWeapon(draggedItem))
                 {
-                    SetIncompatibleOperation(__args, draggedItem);
+                    SetIncompatibleOperation(__args);
                     __result = false;
                     return false;
                 }
@@ -553,7 +638,7 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
             if (ShouldBlockHolsteredWeaponAttachment(slot, draggedItem))
             {
-                SetIncompatibleOperation(__args, draggedItem);
+                SetIncompatibleOperation(__args);
                 __result = false;
                 return false;
             }
@@ -606,14 +691,27 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
             return ShouldBlockMoveToAddress(item, targetAddress) || ShouldBlockMoveToAddress(otherItem, otherTargetAddress);
         }
 
-        private static MethodBase? ResolveCanAcceptMethod()
+        private static MethodInfo? ResolveCanAcceptMethod()
         {
-            if (SlotViewType is null || ItemContextType is null || ItemContextAbstractType is null || OperationType is null)
+            if (SlotViewType is null)
             {
                 return null;
             }
 
-            return AccessTools.Method(SlotViewType, "CanAccept", [ItemContextType, ItemContextAbstractType, OperationType.MakeByRefType()]);
+            return SlotViewType.GetMethods(AccessTools.all).FirstOrDefault(method =>
+            {
+                var parameters = method.GetParameters();
+                return method.Name == "CanAccept"
+                    && method.ReturnType == typeof(bool)
+                    && parameters.Length == 3
+                    && parameters[2].ParameterType.IsByRef;
+            });
+        }
+
+        private static Type? GetParameterType(MethodBase? method, int index)
+        {
+            var parameters = method?.GetParameters();
+            return parameters is not null && parameters.Length > index ? parameters[index].ParameterType : null;
         }
 
         private static MethodInfo? ResolveGetSizeAfterFoldingMethod()
@@ -725,16 +823,16 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
                 || string.Equals(parentId, RevolverCategoryId, StringComparison.Ordinal);
         }
 
-        private static void SetIncompatibleOperation(object[] args, object item)
+        private static void SetIncompatibleOperation(object[] args)
         {
-            if (args.Length < 3 || OperationType is null || IncompatibleItemErrorType is null)
+            if (args.Length < 3 || OperationType is null)
             {
                 return;
             }
 
             try
             {
-                var error = Activator.CreateInstance(IncompatibleItemErrorType, item, null);
+                var error = CreateTextError(ItemIsIncompatibleMessage);
                 if (error is null)
                 {
                     return;
@@ -1191,10 +1289,8 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
     [HarmonyPatch]
     private static class HolsterInventoryMoveSizePatch
     {
-        private static readonly Type? InteractionsHandlerType = AccessTools.TypeByName("InteractionsHandlerClass");
         private static readonly Type? ItemType = AccessTools.TypeByName("EFT.InventoryLogic.Item");
         private static readonly Type? ItemAddressType = AccessTools.TypeByName("EFT.InventoryLogic.ItemAddress");
-        private static readonly Type? TraderControllerType = AccessTools.TypeByName("TraderControllerClass");
 
         private static readonly MethodBase? MoveMethod = ResolveMoveMethod();
         private static readonly MethodBase? SwapMethod = ResolveSwapMethod();
@@ -1271,34 +1367,51 @@ public class HolsterEverythingClientPlugin : BaseUnityPlugin
 
         private static MethodBase? ResolveMoveMethod()
         {
-            if (InteractionsHandlerType is null || ItemType is null || ItemAddressType is null || TraderControllerType is null)
+            if (ItemType is null || ItemAddressType is null)
             {
                 return null;
             }
 
-            return AccessTools.Method(InteractionsHandlerType, "Move", [ItemType, ItemAddressType, TraderControllerType, typeof(bool)]);
+            return FindLoadedMethod(method =>
+            {
+                var parameters = method.GetParameters();
+                return method.Name == "Move"
+                    && parameters.Length == 4
+                    && parameters[0].ParameterType == ItemType
+                    && parameters[1].ParameterType == ItemAddressType
+                    && parameters[3].ParameterType == typeof(bool);
+            });
         }
 
         private static MethodBase? ResolveSwapMethod()
         {
-            if (InteractionsHandlerType is null || ItemType is null || ItemAddressType is null || TraderControllerType is null)
+            if (MoveMethod?.DeclaringType is null || ItemType is null || ItemAddressType is null)
             {
                 return null;
             }
 
-            return AccessTools.Method(InteractionsHandlerType, "Swap", [ItemType, ItemAddressType, ItemType, ItemAddressType, TraderControllerType, typeof(bool)]);
+            return MoveMethod.DeclaringType.GetMethods(AccessTools.all).FirstOrDefault(method =>
+            {
+                var parameters = method.GetParameters();
+                return method.Name == "Swap"
+                    && parameters.Length == 6
+                    && parameters[0].ParameterType == ItemType
+                    && parameters[1].ParameterType == ItemAddressType
+                    && parameters[2].ParameterType == ItemType
+                    && parameters[3].ParameterType == ItemAddressType
+                    && parameters[5].ParameterType == typeof(bool);
+            });
         }
 
         private static object CreateFailureResult(MethodBase method)
         {
             var returnType = (method as MethodInfo)?.ReturnType;
-            var errorType = AccessTools.TypeByName("GClass1522");
-            if (returnType is null || errorType is null)
+            var error = CreateTextError(NoFreeSlotForThatItemMessage);
+            if (returnType is null || error is null)
             {
                 return returnType is null ? new object() : Activator.CreateInstance(returnType)!;
             }
 
-            var error = Activator.CreateInstance(errorType, NoFreeSlotForThatItemMessage);
             return Activator.CreateInstance(returnType, error)!;
         }
     }
