@@ -1,15 +1,15 @@
-﻿# HolsterEverything (SPT 4.0.13)
+﻿# HolsterEverything (SPT 4.1.3)
 
 HolsterEverything is an SPT mod that lets you control which weapon categories can be equipped in the PMC holster slot, with client-side holster size and holster handling restrictions.
 
 ![F12 menu](./Screenshot.png)
 
 ## Compatibility
-- Built and tested on `SPT 4.0.13`
+- Built and tested on `SPT 4.1.3`
 - Other versions may work, but are not guaranteed
 
 ## Download
-- Direct download (`v1.3.1`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v1.3.1/HolsterEverything-v1.3.1.7z)
+- Direct download (`v2.0.0`): [Download](https://github.com/alanyung-yl/HolsterEverything/releases/download/v2.0.0/HolsterEverything-v2.0.0.7z)
 
 [![](https://img.shields.io/github/v/release/alanyung-yl/HolsterEverything?display_name=tag&sort=semver)](https://github.com/alanyung-yl/HolsterEverything/releases/latest)
 [![](https://img.shields.io/github/downloads/alanyung-yl/HolsterEverything/total)](https://github.com/alanyung-yl/HolsterEverything/releases)
@@ -46,7 +46,7 @@ Start the SPT server and check for `HolsterEverything:` log lines.
 ## Uninstall
 Delete:
 
-- `SPT/user/mods/HolsterEverything`
+- `SPT_Runtime/user/mods/HolsterEverything`
 - `BepInEx/plugins/HolsterEverything`
 - If you uninstall the mod while a non-default weapon is already in holster, that weapon can remain there in your existing profile
 - After you unequip that weapon, you cannot equip it back into holster unless the mod is enabled again
