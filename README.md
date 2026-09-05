@@ -40,8 +40,9 @@ HolsterEverything is an SPT mod that lets you control which weapon categories ca
 3. Start the game
 4. Restart server after changing weapon category settings
 
-## Verify It Loaded
-Start the SPT server and check for `HolsterEverything:` log lines.
+## Compatibility
+- CompatibilityHighlighter 1.2.0 can cause the game to hang when used with UI Fixes' `Highlight Compatible Slots` option and HolsterEverything's `Enable Size Limit` option.
+- Update to CompatibilityHighlighter 1.2.1 or newer. No HolsterEverything update is required.
 
 ## Uninstall
 Delete:
